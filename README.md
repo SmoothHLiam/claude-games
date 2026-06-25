@@ -18,6 +18,7 @@ or jump straight into any game's folder.
 | [**GRAVLASSO**](gravlasso/index.html) | Asteroid arena | **No guns** — grab asteroids with a gravity lasso and fling them into enemies and each other. |
 | [**GEMINI**](gemini/index.html) | Mirror snake | **Mirror control** — steer two snakes with one set of controls; Left/Right are flipped, so the amber twin reflects the cyan one across the seam. Feed both, crash neither. |
 | [**AEGIS**](aegis/index.html) | Bullet-parry arena | **No gun** — your rotating shield is your only weapon. Parry incoming bullets to fire them back into the turrets that shot them; chain parries to charge an AEGIS Burst that reflects every bullet at once. |
+| [**TEMPO**](tempo/index.html) | Time-bending arena shooter | **Time moves only when you do** — enemies, their bullets, and spawns all run at the speed *you* move. Stand still and the world nearly freezes; your own shots always fly at full speed. Freeze time, aim, fire, then dance through the gaps. Clear 12 waves to win. |
 
 Each game is a single self-contained `index.html` — **open it directly in any
 modern browser** (double-click, or drag it into a tab). No server needed.
@@ -32,6 +33,7 @@ chromashift/      # CHROMASHIFT — color-polarity arena survivor
 gravlasso/        # GRAVLASSO  — gravity-lasso asteroid arena
 gemini/           # GEMINI     — mirror twin-snake
 aegis/            # AEGIS      — bullet-parry / shield-reflect arena
+tempo/            # TEMPO      — time-moves-when-you-move arena shooter
 ```
 
 ## Notes
