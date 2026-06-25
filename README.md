@@ -1,34 +1,40 @@
-# CHROMASHIFT
+# Claude Games — Arcade
 
-A single-file HTML5 Canvas **arena survivor** with a color-polarity twist.
+A growing collection of small, **complete**, single-file browser games. Every
+game is built to the same contract (see [`GAME_AGENT.md`](GAME_AGENT.md)): it
+boots into a real **main menu**, has a working **pause menu**, ships synthesized
+**sound effects**, and carries **at least one signature twist**. No installs, no
+external assets, no build step.
 
-**Genre:** Top-down arena survival shooter (auto-aim twin-stick-lite).
-**Twist:** You are **CYAN** or **MAGENTA**. Your shots only destroy enemies that
-*match your current color* — the opposite color is immune to your fire and must be
-dodged until you **flip**. The whole game is reading the incoming wave and flipping
-your polarity in time. A combo meter rewards staying on a roll (it only breaks when
-you take a hit), so holding one color is a pure risk/reward gamble.
-**Controls:** Move = `WASD` / Arrows / touch-drag · Flip = `Space` / Click / Tap ·
-Pause = `Esc` / `P` · Mute = `M`. Shooting is automatic and auto-aims the nearest
-enemy of your color.
-**Goal:** Survive escalating waves, build combos, chase a high score. You lose when
-your shield reaches zero.
+## Play
 
-## Run it
+Open **`index.html`** at the repo root for the arcade hub, then pick a game —
+or jump straight into any game's folder.
 
-It's one self-contained file with **no dependencies and no build step**:
+| Game | Genre | The twist |
+|---|---|---|
+| [**FLIPSIDE**](flipside/index.html) | One-button gravity runner | **Graze combo** — the *later* you flip before a spike sweeps past, the bigger the score and the higher your multiplier climbs. Safe play barely scores. |
+| [**CHROMASHIFT**](chromashift/index.html) | Top-down arena survivor | **Color polarity** — you're cyan or magenta and your shots only destroy enemies that match your current color. Flip in time or dodge. |
 
-> **Open `index.html` directly in any modern browser** (double-click it, or drag it
-> into a browser tab). That's it — no server needed.
+Each game is a single self-contained `index.html` — **open it directly in any
+modern browser** (double-click, or drag it into a tab). No server needed.
+
+## Structure
+
+```
+index.html        # arcade hub (links to every game)
+GAME_AGENT.md     # the build contract every game follows
+flipside/         # FLIPSIDE  — gravity-flip runner
+chromashift/      # CHROMASHIFT — color-polarity arena survivor
+```
 
 ## Notes
 
-- 100% procedural: all art is drawn to canvas, all SFX are synthesized with the Web
-  Audio API. No external assets, no CDN, nothing to 404.
-- High score is kept in memory for the session (no `localStorage`), so it resets on
-  reload.
-- Colors are paired with distinct **shapes** (cyan = square, magenta = diamond) so the
-  polarity reads even for color-vision-deficient players.
-- Verified headless (Chromium) for a clean boot, working state machine
-  (menu → play → pause → game over), and zero console errors. Audio autoplay,
-  touch input, and exact visual feel are best confirmed by opening it yourself.
+- **100% procedural.** All art is drawn to canvas; all SFX are synthesized with
+  the Web Audio API. Nothing to download, nothing to 404.
+- High scores are kept in memory for the session (no `localStorage`), so they
+  reset on reload — safe for sandboxed/artifact environments.
+- Games are verified headless (Chromium) for a clean boot, a working state
+  machine (menu → play → pause → game over), and zero console errors. Exact
+  visual feel, audio autoplay, and touch input are best confirmed by opening
+  them yourself.
