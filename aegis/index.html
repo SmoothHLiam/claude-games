@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>AEGIS — reflect the storm</title>
+<!--
+  AEGIS — a single-file, self-contained bullet-parry arena (HTML5 Canvas 2D + Web Audio).
+  Built to the GAME_AGENT.md contract: boots into a main menu, has a pause menu,
+  synthesized SFX, and one signature twist.
+
+  GENRE : top-down survival / bullet-deflect arena
+  TWIST : "No gun." Your rotating shield is your ONLY weapon — angle it to PARRY
+          incoming bullets and send them straight back into the turrets that fired
+          them. Chain parries to build a Surge meter, then unleash an AEGIS BURST
+          (a shockwave that reflects every bullet on screen at once).
+  CONTROLS: Move the mouse (or A/D / ←→) to aim the shield. Space or click = Burst.
+            Esc / P = pause.  M = mute.
+  GOAL : survive escalating waves; score from parries (combo multiplier) and from
+         reflecting bullets back into turrets. Endless — chase a high score.
+
+  Assumptions (request was generic): 2D, procedural art + synthesized SFX, endless
+  score loop with a lose state. Scores kept in memory only (no localStorage).
+-->
+<style>
+  :root{
+    --bg:#070611; --ink:#f1ecff; --dim:#9a92c4; --accent:#b388ff; --danger:#ff4d6d; --gold:#ffd86b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    -webkit-user-select:none; user-select:none; touch-action:none;
+  }
+  #game{position:fixed; inset:0; display:block; background:
+    radial-gradient(900px 700px at 50% 45%, rgba(179,136,255,0.08), transparent 70%),
+    var(--bg);}
+
+  /* ---------- HUD ---------- */
+  #hud{
+    position:fixed; top:0; left:0; right:0; z-index:5; pointer-events:none;
+    display:flex; align-items:center; gap:14px; padding:12px 16px;
+    font-size:14px; letter-spacing:0.04em;
+    text-shadow:0 2px 10px rgba(0,0,0,0.6);
+    transition:opacity .25s ease;
+  }
+  #hud.hidden{opacity:0}
+  #hud .pill{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.10);
+    border-radius:999px;padding:5px 12px;display:flex;align-items:center;gap:7px}
+  #hud .label{color:var(--dim);font-size:11px;letter-spacing:0.12em;text-transform:uppercase}
+  #score{color:var(--accent);font-weight:800;font-variant-numeric:tabular-nums}
+  #combo{color:var(--gold);font-weight:800}
+  #lives{letter-spacing:2px;color:var(--danger);font-size:16px}
+  #surgeWrap{flex:1; max-width:240px; height:12px; border-radius:999px;
+    background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.10); overflow:hidden; position:relative}
+  #surgeBar{position:absolute;inset:0;width:0%;
+    background:linear-gradient(90deg,var(--accent),#7cf0ff);
+    box-shadow:0 0 14px var(--accent); transition:width .08s linear}
+  #surgeWrap.ready{animation:surgePulse .9s ease-in-out infinite}
+  @keyframes surgePulse{0%,100%{box-shadow:0 0 0 0 rgba(179,136,255,0.0)}50%{box-shadow:0 0 0 3px rgba(179,136,255,0.35)}}
+  #surgeText{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-size:10px;letter-spacing:0.18em;color:#0a0814;font-weight:800;text-shadow:none}
+  #muteTag{color:var(--dim);font-size:11px}
+
+  /* ---------- Overlays ---------- */
+  .overlay{
+    position:fixed; inset:0; z-index:10;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:24px;
+    background:radial-gradient(1000px 700px at 50% 40%, rgba(20,12,40,0.72), rgba(5,4,15,0.92));
+    backdrop-filter:blur(2px);
+    transition:opacity .28s ease, transform .28s ease;
+  }
+  .overlay.hidden{opacity:0; pointer-events:none; transform:scale(1.03)}
+  .title{
+    font-size:clamp(54px,15vw,140px); font-weight:900; letter-spacing:0.08em; line-height:0.9;
+    background:linear-gradient(115deg,#e9deff,var(--accent) 50%,#7cf0ff);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    text-shadow:0 0 60px rgba(179,136,255,0.25);
+  }
+  .tag{margin-top:14px;color:var(--ink);font-size:clamp(14px,3.2vw,19px);max-width:560px}
+  .tag b{color:var(--accent)}
+  .sub{margin-top:10px;color:var(--dim);font-size:clamp(12px,2.6vw,14px);max-width:560px;line-height:1.7}
+  .sub kbd{background:#181233;border:1px solid #3a2d63;border-bottom-width:2px;border-radius:6px;
+    padding:1px 7px;color:var(--ink);font-family:inherit;font-size:0.95em}
+  .row{margin-top:26px;display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+  button.btn{
+    font-family:inherit; font-size:16px; font-weight:800; letter-spacing:0.05em;
+    color:#0a0814; background:linear-gradient(180deg,#cdb4ff,var(--accent));
+    border:none; border-radius:14px; padding:14px 26px; cursor:pointer;
+    box-shadow:0 8px 22px rgba(179,136,255,0.35), inset 0 0 0 1px rgba(255,255,255,0.25);
+    transition:transform .12s ease, box-shadow .12s ease, filter .12s ease;
+  }
+  button.btn:hover{transform:translateY(-2px); filter:brightness(1.06); box-shadow:0 12px 30px rgba(179,136,255,0.5)}
+  button.btn:active{transform:translateY(0)}
+  button.btn.ghost{color:var(--ink);background:rgba(255,255,255,0.06);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,0.16)}
+  button.btn.ghost:hover{background:rgba(255,255,255,0.11)}
+  .big{font-size:clamp(40px,10vw,86px);font-weight:900;color:var(--accent);
+    text-shadow:0 0 40px rgba(179,136,255,0.4);margin-top:6px}
+  .stat{color:var(--dim);font-size:14px;margin-top:8px}
+  .stat b{color:var(--gold);font-weight:800}
+  .deadttl{font-size:clamp(40px,11vw,96px);font-weight:900;letter-spacing:0.06em;color:var(--danger);
+    text-shadow:0 0 50px rgba(255,77,109,0.4)}
+  /* on-screen burst button (mobile) */
+  #burstBtn{
+    position:fixed; right:18px; bottom:18px; z-index:6; display:none;
+    width:84px; height:84px; border-radius:50%; border:2px solid var(--accent);
+    background:radial-gradient(circle at 50% 40%, rgba(179,136,255,0.35), rgba(179,136,255,0.10));
+    color:var(--ink); font-family:inherit; font-weight:800; font-size:12px; letter-spacing:0.1em;
+    box-shadow:0 0 24px rgba(179,136,255,0.45);
+  }
+  #burstBtn.show{display:block}
+  .hintline{position:fixed;left:0;right:0;bottom:14px;text-align:center;color:var(--dim);
+    font-size:12px;z-index:4;pointer-events:none;transition:opacity .25s ease}
+  .hintline.hidden{opacity:0}
+  @media (max-width:640px){ #surgeWrap{max-width:120px} #hud{font-size:12px;gap:8px} }
+</style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="pill"><span class="label">Score</span><span id="score">0</span></div>
+    <div class="pill"><span class="label">Combo</span><span id="combo">x1</span></div>
+    <div class="pill"><span class="label">Aegis</span><span id="lives">♥♥♥</span></div>
+    <div id="surgeWrap"><div id="surgeBar"></div><div id="surgeText"></div></div>
+    <div class="pill"><span id="muteTag">♪</span></div>
+  </div>
+
+  <button id="burstBtn">AEGIS<br>BURST</button>
+  <div id="hint" class="hintline hidden">Aim the shield with the mouse · Space / click = Burst · Esc pause · M mute</div>
+
+  <!-- Main menu -->
+  <div id="menu" class="overlay">
+    <div class="title">AEGIS</div>
+    <div class="tag">Twist — <b>no gun.</b> Your shield is your only weapon: <b>parry</b> incoming bullets to fire them back into the turrets that shot them.</div>
+    <div class="sub">
+      Aim the shield with the <kbd>mouse</kbd> (or <kbd>A</kbd>/<kbd>D</kbd>, <kbd>←</kbd>/<kbd>→</kbd>).<br>
+      Chain parries to charge your Surge, then <kbd>Space</kbd> / <kbd>click</kbd> an <b>AEGIS BURST</b> that reflects every bullet at once.<br>
+      <kbd>Esc</kbd>/<kbd>P</kbd> pause · <kbd>M</kbd> mute.
+    </div>
+    <div class="row">
+      <button class="btn" id="playBtn">▶ PLAY</button>
+      <button class="btn ghost" id="muteBtn">♪ Sound: On</button>
+    </div>
+    <div class="sub" style="margin-top:22px">Survive the storm. Send it back.</div>
+  </div>
+
+  <!-- Pause menu -->
+  <div id="pause" class="overlay hidden">
+    <div class="title" style="font-size:clamp(40px,11vw,92px)">PAUSED</div>
+    <div class="sub">The storm is frozen.</div>
+    <div class="row">
+      <button class="btn" id="resumeBtn">▶ Resume</button>
+      <button class="btn ghost" id="restartBtn">↻ Restart</button>
+      <button class="btn ghost" id="quitBtn">⏏ Main Menu</button>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn ghost" id="muteBtn2">♪ Sound: On</button>
+    </div>
+  </div>
+
+  <!-- Game over -->
+  <div id="over" class="overlay hidden">
+    <div class="deadttl">SHIELD DOWN</div>
+    <div class="big" id="finalScore">0</div>
+    <div class="stat">Best this session: <b id="bestScore">0</b></div>
+    <div class="stat">Top combo <b id="bestCombo">x1</b> · Turrets wrecked <b id="kills">0</b></div>
+    <div class="row">
+      <button class="btn" id="againBtn">▶ Play Again</button>
+      <button class="btn ghost" id="menuBtn">⏏ Main Menu</button>
+    </div>
+  </div>
+
+<script>
+"use strict";
+/* ============================================================= AEGIS ===== */
+
+// ===== CONFIG =====
+const CFG = {
+  coreR: 22,           // player core radius
+  shieldR: 70,         // distance of the shield arc from center
+  shieldHalf: 0.62,    // half-angle of the shield arc (radians) ~ 71° total
+  shieldRotSpeed: 6.5, // rad/s for keyboard aiming
+  shieldFollow: 22,    // how snappily the shield eases toward the aim target
+  bulletR: 6.5,
+  startLives: 3,
+  surgeMax: 100,
+  surgePerParry: 7,    // base surge gained per parry
+  burstSpeed: 760,     // px/s expansion of the burst shockwave
+  comboWindow: 2.6,    // seconds before the combo decays
+  maxTurrets: 9,
+  turretR: 16,
+  turretHP: 3,
+};
+
+// ===== STATE =====
+const GameState = { MENU:'MENU', PLAYING:'PLAYING', PAUSED:'PAUSED', GAME_OVER:'GAME_OVER' };
+let state = GameState.MENU;
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, cx = 0, cy = 0;     // CSS-pixel viewport + arena center
+let arenaR = 0;                       // radius of the turret ring
+
+let G = null;                         // the live game object (created in startGame)
+let bestScore = 0;
+let last = performance.now();
+let shake = 0;                        // screen-shake magnitude
+let hitFlash = 0;                     // red vignette intensity on damage
+let hintTimer = 0;                    // auto-hide the bottom control hint
+
+// ===== AUDIO (synthesized, zero asset files) =====
+const Sound = (() => {
+  let actx, muted = false;
+  const ensure = () => { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); };
+  const unlock = () => { ensure(); if (actx.state === 'suspended') actx.resume(); };
+  function tone({ freq=440, dur=0.12, type='square', vol=0.2, slide=0, delay=0 }) {
+    if (muted) return;
+    ensure();
+    const t0 = actx.currentTime + delay;
+    const osc = actx.createOscillator(), gain = actx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freq + slide), t0 + dur);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(vol, t0 + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(gain).connect(actx.destination);
+    osc.start(t0); osc.stop(t0 + dur + 0.02);
+  }
+  return {
+    unlock,
+    parry:   () => tone({ freq: 660, dur: 0.09, type: 'square',   vol: 0.16, slide:  520 }),
+    perfect: () => { tone({ freq: 740, dur: 0.10, type: 'square', vol: 0.18, slide: 700 });
+                     tone({ freq: 1180, dur: 0.12, type:'triangle', vol:0.12, delay:0.05 }); },
+    hurt:    () => tone({ freq: 150, dur: 0.30, type: 'sawtooth', vol: 0.26, slide: -90 }),
+    kill:    () => { tone({ freq: 220, dur: 0.16, type:'square', vol:0.18, slide:-120 });
+                     tone({ freq: 90, dur: 0.22, type:'sawtooth', vol:0.16, delay:0.02 }); },
+    burst:   () => { tone({ freq: 180, dur: 0.5, type:'sawtooth', vol:0.22, slide: 600 });
+                     tone({ freq: 900, dur: 0.4, type:'triangle', vol:0.14, slide:-500, delay:0.02 }); },
+    click:   () => tone({ freq: 480, dur: 0.05, type: 'square', vol: 0.12 }),
+    over:    () => { tone({ freq:300, dur:0.5, type:'sawtooth', vol:0.22, slide:-200 });
+                     tone({ freq:120, dur:0.7, type:'sine', vol:0.18, slide:-60, delay:0.1 }); },
+    toggleMute: () => (muted = !muted),
+    get muted() { return muted; },
+  };
+})();
+
+// ===== INPUT =====
+const keys = {};
+let aimAngle = 0;        // target angle the shield eases toward
+let usingMouse = false;
+
+addEventListener('keydown', (e) => {
+  if (!keys[e.code]) Sound.unlock();
+  keys[e.code] = true;
+  if (e.code === 'Escape' || e.code === 'KeyP') { togglePause(); e.preventDefault(); return; }
+  if (e.code === 'KeyM') { toggleMute(); e.preventDefault(); return; }
+  if (e.code === 'Space') { if (state === GameState.PLAYING) tryBurst(); e.preventDefault(); return; }
+  if (['ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault();
+});
+addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+function pointerAim(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  const mx = clientX - r.left, my = clientY - r.top;
+  aimAngle = Math.atan2(my - cy, mx - cx);
+  usingMouse = true;
+}
+canvas.addEventListener('pointermove', (e) => pointerAim(e.clientX, e.clientY));
+canvas.addEventListener('pointerdown', (e) => {
+  Sound.unlock();
+  pointerAim(e.clientX, e.clientY);
+  if (state === GameState.PLAYING) tryBurst();   // click / tap = burst when ready
+});
+
+// ===== HELPERS =====
+const TAU = Math.PI * 2;
+function angDiff(a, b){ let d = a - b; while (d > Math.PI) d -= TAU; while (d < -Math.PI) d += TAU; return d; }
+function rand(a, b){ return a + Math.random() * (b - a); }
+
+// ===== ENTITIES / FACTORY =====
+function newGame() {
+  const turrets = [];
+  for (let i = 0; i < CFG.maxTurrets; i++) {
+    const ang = (i / CFG.maxTurrets) * TAU - Math.PI / 2;
+    turrets.push({ baseAng: ang, x: 0, y: 0, r: CFG.turretR,
+      hp: 0, maxhp: CFG.turretHP, alive: false, respawn: rand(0, 1.5), fireT: rand(0.5, 2), flash: 0 });
+  }
+  return {
+    t: 0,                 // elapsed gameplay time
+    score: 0,
+    lives: CFG.startLives,
+    combo: 0, comboT: 0, bestCombo: 0,
+    surge: 0, burstReady: false,
+    kills: 0,
+    shieldAngle: -Math.PI / 2,
+    corePulse: 0,
+    bullets: [],
+    turrets,
+    particles: [],
+    pops: [],            // floating score text
+    waves: [],           // burst shockwaves
+  };
+}
+
+function placeTurrets() {
+  for (const tr of G.turrets) {
+    tr.x = cx + Math.cos(tr.baseAng) * arenaR;
+    tr.y = cy + Math.sin(tr.baseAng) * arenaR;
+  }
+}
+
+// ===== JUICE: particles + score popups =====
+function burstParticles(x, y, color, count = 12, spd = 3.4) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * TAU, s = rand(0.4, 1) * spd;
+    G.particles.push({ x, y, vx: Math.cos(a)*s*60, vy: Math.sin(a)*s*60,
+      life: 1, max: rand(0.4, 0.8), color, size: rand(1.5, 3.5) });
+  }
+}
+function popText(x, y, text, color) {
+  G.pops.push({ x, y, vy: -42, life: 1, text, color });
+}
+
+// ===== TRANSITIONS =====
+function show(id, on){ document.getElementById(id).classList.toggle('hidden', !on); }
+
+function startGame() {
+  G = newGame();
+  resize();                 // also calls placeTurrets via arena recompute below
+  placeTurrets();
+  state = GameState.PLAYING;
+  show('menu', false); show('pause', false); show('over', false);
+  document.getElementById('hud').classList.remove('hidden');
+  document.getElementById('hint').classList.remove('hidden');
+  hintTimer = 5;
+  last = performance.now();
+}
+function togglePause() {
+  if (state === GameState.PLAYING) {
+    state = GameState.PAUSED; show('pause', true); syncMuteLabels();
+  } else if (state === GameState.PAUSED) {
+    state = GameState.PLAYING; show('pause', false); last = performance.now();
+  }
+}
+function endGame() {
+  state = GameState.GAME_OVER;
+  Sound.over();
+  bestScore = Math.max(bestScore, G.score);
+  document.getElementById('finalScore').textContent = G.score;
+  document.getElementById('bestScore').textContent = bestScore;
+  document.getElementById('bestCombo').textContent = 'x' + (G.bestCombo || 1);
+  document.getElementById('kills').textContent = G.kills;
+  document.getElementById('hud').classList.add('hidden');
+  document.getElementById('hint').classList.add('hidden');
+  document.getElementById('burstBtn').classList.remove('show');
+  show('over', true);
+}
+function returnToMenu() {
+  state = GameState.MENU;
+  document.getElementById('hud').classList.add('hidden');
+  document.getElementById('hint').classList.add('hidden');
+  document.getElementById('burstBtn').classList.remove('show');
+  show('pause', false); show('over', false); show('menu', true);
+}
+function toggleMute() {
+  Sound.toggleMute();
+  syncMuteLabels();
+}
+function syncMuteLabels() {
+  const on = !Sound.muted;
+  const label = '♪ Sound: ' + (on ? 'On' : 'Off');
+  document.getElementById('muteBtn').textContent = label;
+  document.getElementById('muteBtn2').textContent = label;
+  document.getElementById('muteTag').textContent = on ? '♪' : '✕';
+}
+
+function tryBurst() {
+  if (!G || !G.burstReady) return;
+  G.burstReady = false;
+  G.surge = 0;
+  G.waves.push({ r: CFG.coreR, max: Math.hypot(W, H) });
+  shake = Math.min(shake + 10, 16);
+  Sound.burst();
+}
+
+// ===== UPDATE =====
+function update(dt) {
+  G.t += dt;
+  G.corePulse += dt * 4;
+
+  // --- shield aiming (mouse target OR keyboard rotation) ---
+  let kbd = 0;
+  if (keys['ArrowLeft'] || keys['KeyA']) kbd -= 1;
+  if (keys['ArrowRight'] || keys['KeyD']) kbd += 1;
+  if (kbd !== 0) { aimAngle += kbd * CFG.shieldRotSpeed * dt; usingMouse = false; }
+  // ease the actual shield toward the aim target (snappy but weighty)
+  G.shieldAngle += angDiff(aimAngle, G.shieldAngle) * Math.min(1, dt * CFG.shieldFollow);
+
+  // --- difficulty curve ---
+  const t = G.t;
+  const desiredActive = Math.min(CFG.maxTurrets, 3 + Math.floor(t / 14));
+  const fireInterval  = Math.max(0.55, 1.9 - t * 0.02);
+  const bulletSpeed   = Math.min(370, 135 + t * 4.2);
+  const respawnDelay  = Math.max(1.6, 4.2 - t * 0.03);
+
+  // --- turrets: respawn + fire ---
+  let aliveCount = G.turrets.reduce((n, tr) => n + (tr.alive ? 1 : 0), 0);
+  for (const tr of G.turrets) {
+    if (tr.flash > 0) tr.flash -= dt * 4;
+    if (!tr.alive) {
+      tr.respawn -= dt;
+      if (tr.respawn <= 0 && aliveCount < desiredActive) {
+        tr.alive = true; tr.hp = tr.maxhp; tr.fireT = rand(0.4, fireInterval);
+        tr.flash = 1; aliveCount++;
+        burstParticles(tr.x, tr.y, '#b388ff', 10, 2.4);
+      }
+      continue;
+    }
+    tr.fireT -= dt;
+    if (tr.fireT <= 0) {
+      tr.fireT = fireInterval * rand(0.75, 1.3);
+      // fire toward the core with a little spread
+      const baseA = Math.atan2(cy - tr.y, cx - tr.x) + rand(-0.10, 0.10);
+      G.bullets.push({ x: tr.x, y: tr.y,
+        vx: Math.cos(baseA) * bulletSpeed, vy: Math.sin(baseA) * bulletSpeed,
+        r: CFG.bulletR, deflected: false, src: tr });
+    }
+  }
+
+  // --- combo decay ---
+  if (G.combo > 0) { G.comboT -= dt; if (G.comboT <= 0) G.combo = 0; }
+
+  // --- bullets ---
+  const shieldR = CFG.shieldR;
+  for (const b of G.bullets) {
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    const dx = b.x - cx, dy = b.y - cy;
+    const d = Math.hypot(dx, dy);
+    const ang = Math.atan2(dy, dx);
+
+    if (!b.deflected) {
+      if (d <= shieldR) {
+        // crossed the shield ring heading inward
+        if (Math.abs(angDiff(ang, G.shieldAngle)) <= CFG.shieldHalf) {
+          deflectBullet(b, ang);
+        } else if (d <= CFG.coreR + b.r) {
+          // slipped past the shield and reached the core
+          b.dead = true;
+          damageCore();
+        }
+        // else: between shield and core but in a gap — keep travelling inward
+      }
+    } else {
+      // a deflected bullet — check it for turret hits
+      for (const tr of G.turrets) {
+        if (!tr.alive) continue;
+        if (Math.hypot(b.x - tr.x, b.y - tr.y) <= tr.r + b.r) {
+          hitTurret(tr, b);
+          b.dead = true;
+          break;
+        }
+      }
+      // despawn once well off-screen
+      if (b.x < -60 || b.x > W + 60 || b.y < -60 || b.y > H + 60) b.dead = true;
+    }
+  }
+
+  // --- burst shockwaves: reflect every bullet they overtake ---
+  for (const w of G.waves) {
+    w.r += CFG.burstSpeed * dt;
+    for (const b of G.bullets) {
+      if (b.deflected || b.dead) continue;
+      const d = Math.hypot(b.x - cx, b.y - cy);
+      if (d <= w.r) {
+        const ang = Math.atan2(b.y - cy, b.x - cx);
+        deflectBullet(b, ang, true);
+      }
+    }
+  }
+  G.waves = G.waves.filter(w => w.r < w.max);
+
+  // --- particles & pops ---
+  for (const p of G.particles) {
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vx *= 0.92; p.vy *= 0.92;
+    p.life -= dt / p.max;
+  }
+  for (const p of G.pops) { p.y += p.vy * dt; p.vy *= 0.92; p.life -= dt * 0.9; }
+
+  // --- cleanup ---
+  G.bullets   = G.bullets.filter(b => !b.dead);
+  G.particles = G.particles.filter(p => p.life > 0);
+  G.pops      = G.pops.filter(p => p.life > 0);
+
+  // surge / burst readiness
+  if (G.surge >= CFG.surgeMax) { G.surge = CFG.surgeMax; G.burstReady = true; }
+
+  // decay screen effects
+  shake *= Math.pow(0.0001, dt);     // ~ fast frame-rate-independent decay
+  if (shake < 0.05) shake = 0;
+  hitFlash = Math.max(0, hitFlash - dt * 2.4);
+  if (hintTimer > 0) { hintTimer -= dt; if (hintTimer <= 0) document.getElementById('hint').classList.add('hidden'); }
+}
+
+function deflectBullet(b, ang, fromBurst = false) {
+  b.deflected = true;
+  const sp = Math.hypot(b.vx, b.vy) * 1.18 + 60;
+  b.vx = Math.cos(ang) * sp;
+  b.vy = Math.sin(ang) * sp;
+  // scoring + combo + surge
+  G.combo += 1; G.comboT = CFG.comboWindow;
+  G.bestCombo = Math.max(G.bestCombo, G.combo);
+  const gain = 10 * G.combo;
+  G.score += gain;
+  G.surge = Math.min(CFG.surgeMax, G.surge + CFG.surgePerParry);
+  burstParticles(b.x, b.y, '#7cf0ff', fromBurst ? 6 : 9, 2.6);
+  if (!fromBurst) popText(b.x, b.y, '+' + gain, '#7cf0ff');
+  if (G.combo > 1 && G.combo % 5 === 0) { Sound.perfect(); shake = Math.min(shake + 4, 14); }
+  else if (!fromBurst) Sound.parry();
+}
+
+function hitTurret(tr, b) {
+  tr.hp -= 1; tr.flash = 1;
+  burstParticles(b.x, b.y, '#ffd86b', 8, 2.6);
+  if (tr.hp <= 0) {
+    tr.alive = false; tr.respawn = Math.max(1.6, 4.2 - G.t * 0.03);
+    G.kills += 1; G.score += 100;
+    popText(tr.x, tr.y, '+100', '#ffd86b');
+    burstParticles(tr.x, tr.y, '#ffd86b', 22, 4.2);
+    shake = Math.min(shake + 6, 16);
+    Sound.kill();
+  } else {
+    Sound.click();
+  }
+}
+
+function damageCore() {
+  G.lives -= 1;
+  G.combo = 0;
+  shake = Math.min(shake + 9, 18);
+  hitFlash = 1;
+  burstParticles(cx, cy, '#ff4d6d', 26, 4.5);
+  Sound.hurt();
+  if (G.lives <= 0) endGame();
+}
+
+// ===== RENDER =====
+function render() {
+  ctx.clearRect(0, 0, W, H);
+
+  // screen shake
+  const sx = (Math.random() - 0.5) * shake;
+  const sy = (Math.random() - 0.5) * shake;
+  ctx.save();
+  ctx.translate(sx, sy);
+
+  // faint arena ring
+  ctx.strokeStyle = 'rgba(179,136,255,0.12)';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, arenaR, 0, TAU); ctx.stroke();
+
+  // turrets
+  for (const tr of G.turrets) {
+    if (!tr.alive) {
+      // dormant socket
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(tr.x, tr.y, tr.r * 0.7, 0, TAU); ctx.stroke();
+      continue;
+    }
+    const f = Math.max(0, tr.flash);
+    ctx.save();
+    ctx.translate(tr.x, tr.y);
+    ctx.rotate(Math.atan2(cy - tr.y, cx - tr.x));
+    // body
+    ctx.fillStyle = f > 0 ? '#fff' : '#ff7d97';
+    ctx.strokeStyle = '#ff4d6d'; ctx.lineWidth = 2;
+    roundRect(-tr.r, -tr.r, tr.r * 2, tr.r * 2, 5); ctx.fill(); ctx.stroke();
+    // barrel pointing at core
+    ctx.fillStyle = '#ff4d6d';
+    ctx.fillRect(tr.r - 3, -4, 12, 8);
+    ctx.restore();
+    // hp pips
+    for (let i = 0; i < tr.maxhp; i++) {
+      ctx.fillStyle = i < tr.hp ? '#ffd86b' : 'rgba(255,255,255,0.15)';
+      ctx.beginPath(); ctx.arc(tr.x - (tr.maxhp - 1) * 4 + i * 8, tr.y - tr.r - 8, 2.2, 0, TAU); ctx.fill();
+    }
+  }
+
+  // bullets
+  for (const b of G.bullets) {
+    const col = b.deflected ? '#7cf0ff' : '#ff4d6d';
+    ctx.fillStyle = col;
+    ctx.shadowColor = col; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, TAU); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // burst shockwaves
+  for (const w of G.waves) {
+    const a = Math.max(0, 1 - w.r / w.max);
+    ctx.strokeStyle = `rgba(179,136,255,${0.5 * a + 0.15})`;
+    ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.arc(cx, cy, w.r, 0, TAU); ctx.stroke();
+  }
+
+  // core
+  const pulse = 1 + Math.sin(G.corePulse) * 0.06;
+  ctx.fillStyle = '#0c0a1c';
+  ctx.strokeStyle = '#b388ff'; ctx.lineWidth = 3;
+  ctx.shadowColor = '#b388ff'; ctx.shadowBlur = 18;
+  ctx.beginPath(); ctx.arc(cx, cy, CFG.coreR * pulse, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.shadowBlur = 0;
+  // inner eye
+  ctx.fillStyle = '#b388ff';
+  ctx.beginPath(); ctx.arc(cx, cy, CFG.coreR * 0.4, 0, TAU); ctx.fill();
+
+  // shield arc
+  const ready = G.burstReady;
+  ctx.strokeStyle = ready ? '#cdb4ff' : '#7cf0ff';
+  ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = ready ? 22 : 12;
+  ctx.lineWidth = 9; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(cx, cy, CFG.shieldR, G.shieldAngle - CFG.shieldHalf, G.shieldAngle + CFG.shieldHalf);
+  ctx.stroke();
+  ctx.shadowBlur = 0; ctx.lineCap = 'butt';
+  // little handle line from core to shield
+  ctx.strokeStyle = 'rgba(124,240,255,0.35)'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx + Math.cos(G.shieldAngle) * CFG.coreR, cy + Math.sin(G.shieldAngle) * CFG.coreR);
+  ctx.lineTo(cx + Math.cos(G.shieldAngle) * (CFG.shieldR - 6), cy + Math.sin(G.shieldAngle) * (CFG.shieldR - 6));
+  ctx.stroke();
+
+  // particles
+  for (const p of G.particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, TAU); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // score popups
+  ctx.textAlign = 'center'; ctx.font = '700 15px ui-monospace, monospace';
+  for (const p of G.pops) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+
+  // red damage vignette (outside shake transform)
+  if (hitFlash > 0) {
+    const g = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.25, cx, cy, Math.max(W, H) * 0.7);
+    g.addColorStop(0, 'rgba(255,77,109,0)');
+    g.addColorStop(1, `rgba(255,77,109,${0.45 * hitFlash})`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+
+  // HUD text
+  if (state === GameState.PLAYING || state === GameState.PAUSED) updateHUD();
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function updateHUD() {
+  document.getElementById('score').textContent = G.score;
+  document.getElementById('combo').textContent = 'x' + Math.max(1, G.combo);
+  document.getElementById('lives').textContent = G.lives > 0 ? '♥'.repeat(G.lives) : '—';
+  const pct = (G.surge / CFG.surgeMax) * 100;
+  document.getElementById('surgeBar').style.width = pct + '%';
+  const wrap = document.getElementById('surgeWrap');
+  wrap.classList.toggle('ready', G.burstReady);
+  document.getElementById('surgeText').textContent = G.burstReady ? 'BURST READY' : '';
+  document.getElementById('burstBtn').classList.toggle('show', G.burstReady && state === GameState.PLAYING);
+}
+
+// ===== GAME LOOP =====
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05); // clamp big gaps (tab-out)
+  last = now;
+  if (state === GameState.PLAYING) update(dt);
+  if (G) render();                                 // keep the scene drawn behind overlays
+  requestAnimationFrame(frame);
+}
+
+// ===== RESIZE / DPI =====
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.floor(W * dpr);
+  canvas.height = Math.floor(H * dpr);
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx = W / 2; cy = H / 2;
+  arenaR = Math.max(150, Math.min(W, H) * 0.42);
+  if (G) placeTurrets();
+}
+addEventListener('resize', resize);
+
+// ===== BOOT / UI WIRING =====
+function wire(id, fn) { document.getElementById(id).addEventListener('click', () => { Sound.unlock(); Sound.click(); fn(); }); }
+wire('playBtn',   startGame);
+wire('resumeBtn', togglePause);
+wire('restartBtn', startGame);
+wire('quitBtn',   returnToMenu);
+wire('againBtn',  startGame);
+wire('menuBtn',   returnToMenu);
+document.getElementById('muteBtn').addEventListener('click', () => { Sound.unlock(); toggleMute(); });
+document.getElementById('muteBtn2').addEventListener('click', () => { Sound.unlock(); toggleMute(); });
+document.getElementById('burstBtn').addEventListener('click', (e) => { e.stopPropagation(); tryBurst(); });
+
+resize();
+syncMuteLabels();
+// give the menu a quiet idle scene so the canvas isn't blank behind it
+G = newGame(); placeTurrets();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

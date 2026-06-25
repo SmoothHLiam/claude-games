@@ -17,6 +17,7 @@ or jump straight into any game's folder.
 | [**CHROMASHIFT**](chromashift/index.html) | Top-down arena survivor | **Color polarity** — you're cyan or magenta and your shots only destroy enemies that match your current color. Flip in time or dodge. |
 | [**GRAVLASSO**](gravlasso/index.html) | Asteroid arena | **No guns** — grab asteroids with a gravity lasso and fling them into enemies and each other. |
 | [**GEMINI**](gemini/index.html) | Mirror snake | **Mirror control** — steer two snakes with one set of controls; Left/Right are flipped, so the amber twin reflects the cyan one across the seam. Feed both, crash neither. |
+| [**AEGIS**](aegis/index.html) | Bullet-parry arena | **No gun** — your rotating shield is your only weapon. Parry incoming bullets to fire them back into the turrets that shot them; chain parries to charge an AEGIS Burst that reflects every bullet at once. |
 
 Each game is a single self-contained `index.html` — **open it directly in any
 modern browser** (double-click, or drag it into a tab). No server needed.
@@ -30,6 +31,7 @@ flipside/         # FLIPSIDE   — gravity-flip runner
 chromashift/      # CHROMASHIFT — color-polarity arena survivor
 gravlasso/        # GRAVLASSO  — gravity-lasso asteroid arena
 gemini/           # GEMINI     — mirror twin-snake
+aegis/            # AEGIS      — bullet-parry / shield-reflect arena
 ```
 
 ## Notes
