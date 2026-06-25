@@ -15,6 +15,8 @@ or jump straight into any game's folder.
 |---|---|---|
 | [**FLIPSIDE**](flipside/index.html) | One-button gravity runner | **Graze combo** — the *later* you flip before a spike sweeps past, the bigger the score and the higher your multiplier climbs. Safe play barely scores. |
 | [**CHROMASHIFT**](chromashift/index.html) | Top-down arena survivor | **Color polarity** — you're cyan or magenta and your shots only destroy enemies that match your current color. Flip in time or dodge. |
+| [**GRAVLASSO**](gravlasso/index.html) | Asteroid arena | **No guns** — grab asteroids with a gravity lasso and fling them into enemies and each other. |
+| [**GEMINI**](gemini/index.html) | Mirror snake | **Mirror control** — steer two snakes with one set of controls; Left/Right are flipped, so the amber twin reflects the cyan one across the seam. Feed both, crash neither. |
 
 Each game is a single self-contained `index.html` — **open it directly in any
 modern browser** (double-click, or drag it into a tab). No server needed.
@@ -24,8 +26,10 @@ modern browser** (double-click, or drag it into a tab). No server needed.
 ```
 index.html        # arcade hub (links to every game)
 GAME_AGENT.md     # the build contract every game follows
-flipside/         # FLIPSIDE  — gravity-flip runner
+flipside/         # FLIPSIDE   — gravity-flip runner
 chromashift/      # CHROMASHIFT — color-polarity arena survivor
+gravlasso/        # GRAVLASSO  — gravity-lasso asteroid arena
+gemini/           # GEMINI     — mirror twin-snake
 ```
 
 ## Notes
