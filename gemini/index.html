@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>GEMINI</title>
+<!--
+  ============================================================================
+  GEMINI  —  a single-file HTML5 Canvas mirror twin-snake game
+  ----------------------------------------------------------------------------
+  GENRE   : Grid snake (arcade), reimagined as a two-body control puzzle.
+  TWIST   : MIRROR CONTROL. You steer TWO snakes with one set of controls.
+            Up/Down move both the same way; Left/Right are MIRRORED — press
+            Left and the cyan twin goes left while the amber twin goes right.
+            The board is split by a glowing seam down the middle; each twin
+            lives in its own half and the ONLY place they can crash into each
+            other is when both shove into the seam at once. Food spawns in
+            mirrored pairs, so a path that feeds one feeds both. Grow long and
+            your own coiling tail becomes the real enemy — in stereo.
+  CONTROLS: Steer   = Arrow keys / WASD   (Left & Right are mirrored)
+            Pause   = Esc or P            Mute = M
+            Start / Restart = Enter or Click      Touch = swipe to steer
+  GOAL    : Eat the mirrored food pairs to grow and score. Speed escalates as
+            you grow. You lose the instant EITHER twin hits a wall, its own
+            body, the other twin, or crosses the seam. Endless; chase the best
+            run. Eat both halves of a pair on the same step for a SYNC bonus.
+
+  DEFAULTS taken (per GAME_AGENT.md): 2D, procedural art, synthesized Web Audio
+  SFX, endless score loop with a lose state. No external assets, no CDN, no
+  build step — open index.html in any modern browser.
+  ============================================================================
+-->
+<style>
+  :root {
+    --bg:    #070a12;
+    --ink:   #eaf6ff;
+    --cyan:  #37e0ff;
+    --amber: #ffb347;
+    --warn:  #ff4d6d;
+    --gold:  #ffd34d;
+    --dim:   #8290ac;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+  #wrap { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  /* ---------- Overlays ---------- */
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+    background: radial-gradient(ellipse at center, rgba(8,12,24,0.74), rgba(3,5,11,0.93));
+    z-index: 10;
+    padding: 24px;
+    opacity: 1;
+    transition: opacity .28s ease;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+
+  .title {
+    font-size: clamp(46px, 12vw, 104px);
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    line-height: 0.95;
+    background: linear-gradient(100deg, var(--cyan) 0%, #bfe9ff 48%, var(--amber) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 38px rgba(55,224,255,0.22);
+    transform: translateY(0);
+    animation: floaty 4s ease-in-out infinite;
+  }
+  @keyframes floaty { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
+
+  .tagline { margin-top: 14px; color: var(--ink); font-size: clamp(13px, 3vw, 17px); max-width: 540px; }
+  .tagline b { color: var(--gold); }
+  .sub { margin-top: 6px; color: var(--dim); font-size: clamp(12px, 2.6vw, 14px); }
+
+  .btn {
+    margin-top: 26px; cursor: pointer;
+    font-family: inherit; font-size: clamp(16px, 3.4vw, 20px); font-weight: 700;
+    letter-spacing: 0.05em; color: var(--bg);
+    background: linear-gradient(100deg, var(--cyan), var(--amber));
+    border: none; border-radius: 999px; padding: 14px 40px;
+    box-shadow: 0 10px 30px rgba(55,224,255,0.28);
+    transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+  }
+  .btn:hover { transform: translateY(-2px) scale(1.03); box-shadow: 0 14px 36px rgba(255,179,71,0.34); filter: brightness(1.06); }
+  .btn:active { transform: translateY(0) scale(0.99); }
+  .btn.ghost {
+    background: transparent; color: var(--ink);
+    border: 1.5px solid rgba(255,255,255,0.22); box-shadow: none;
+    padding: 12px 30px; font-size: clamp(14px, 3vw, 16px);
+  }
+  .btn.ghost:hover { border-color: var(--cyan); color: var(--cyan); }
+  .btnrow { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-top: 24px; }
+
+  .controls {
+    margin-top: 26px; color: var(--dim); font-size: clamp(12px, 2.6vw, 14px);
+    line-height: 1.9; max-width: 560px;
+  }
+  .controls b { color: var(--ink); }
+  .controls .key {
+    display: inline-block; min-width: 22px; padding: 1px 8px; margin: 0 1px;
+    border: 1px solid #2a3450; border-radius: 6px; background: #121a2e;
+    color: #cdd9f2; font-size: 12px;
+  }
+
+  .panelhead { font-size: clamp(26px, 6vw, 40px); font-weight: 800; letter-spacing: 0.06em; }
+  .panelhead.win  { color: var(--gold); text-shadow: 0 0 28px rgba(255,211,77,0.4); }
+  .panelhead.lose { color: var(--warn); text-shadow: 0 0 28px rgba(255,77,109,0.35); }
+  .bigscore { margin-top: 14px; font-size: clamp(34px, 9vw, 64px); font-weight: 800; color: var(--ink); }
+  .scoresub { margin-top: 4px; color: var(--dim); font-size: clamp(13px, 2.8vw, 15px); }
+  .scoresub b { color: var(--gold); }
+
+  /* ---------- HUD ---------- */
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 14px 18px; pointer-events: none;
+    font-size: clamp(13px, 2.8vw, 16px);
+    text-shadow: 0 2px 10px rgba(0,0,0,0.6);
+  }
+  #hud .stat { line-height: 1.25; }
+  #hud .label { color: var(--dim); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; }
+  #hud .val { font-weight: 800; font-size: clamp(20px, 5vw, 30px); }
+  #hud .right { text-align: right; }
+  #hud .best .val { color: var(--gold); }
+  #hud .len .val { color: var(--cyan); }
+  #syncpill {
+    margin-top: 6px; display: inline-block; font-size: 11px; letter-spacing: 0.12em;
+    color: var(--gold); border: 1px solid var(--gold); border-radius: 999px;
+    padding: 2px 9px; opacity: 0; transition: opacity .2s ease;
+  }
+  #syncpill.on { opacity: 0.95; }
+
+  .hint {
+    position: absolute; left: 0; right: 0; bottom: 16px; text-align: center;
+    color: var(--dim); font-size: 12px; z-index: 5; pointer-events: none;
+    letter-spacing: 0.04em;
+  }
+
+  .muteline { margin-top: 22px; color: var(--dim); font-size: 12px; }
+  .muteline b { color: var(--ink); }
+  #muteState { color: var(--cyan); }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game"></canvas>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div class="stat">
+      <div class="label">Score</div>
+      <div class="val" id="hudScore">0</div>
+      <div id="syncpill">SYNC ×2</div>
+    </div>
+    <div class="stat right">
+      <div class="len"><div class="label">Length</div><div class="val" id="hudLen">3</div></div>
+    </div>
+  </div>
+
+  <!-- Main Menu -->
+  <div id="menu" class="overlay">
+    <div class="title">GEMINI</div>
+    <div class="tagline">One set of controls. <b>Two mirrored snakes.</b> Feed both, crash neither.</div>
+    <div class="sub">Left &amp; Right are mirrored — the twins are reflections across the seam.</div>
+    <button class="btn" id="playBtn">▶ PLAY</button>
+    <div class="controls">
+      <b>Steer</b> <span class="key">←</span><span class="key">→</span><span class="key">↑</span><span class="key">↓</span> or
+      <span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span>
+      &nbsp;·&nbsp; <b>Pause</b> <span class="key">Esc</span>/<span class="key">P</span>
+      &nbsp;·&nbsp; <b>Mute</b> <span class="key">M</span><br>
+      Up/Down move both twins the same way. <b style="color:var(--warn)">Left/Right are flipped</b> — the amber twin mirrors the cyan one. Don't shove both into the seam at once.
+    </div>
+    <div class="muteline">Sound: <b id="muteState">ON</b> — press <b>M</b> to toggle</div>
+  </div>
+
+  <!-- Pause Menu -->
+  <div id="pause" class="overlay hidden">
+    <div class="panelhead">PAUSED</div>
+    <div class="btnrow">
+      <button class="btn" id="resumeBtn">Resume</button>
+      <button class="btn ghost" id="restartBtn">Restart</button>
+      <button class="btn ghost" id="quitBtn">Quit to Menu</button>
+    </div>
+    <div class="muteline">Sound: <b id="muteState2">ON</b> — press <b>M</b> to toggle</div>
+  </div>
+
+  <!-- Game Over -->
+  <div id="over" class="overlay hidden">
+    <div class="panelhead lose" id="overHead">CRASHED</div>
+    <div class="bigscore" id="overScore">0</div>
+    <div class="scoresub" id="overSub">Best <b>0</b></div>
+    <div class="btnrow">
+      <button class="btn" id="againBtn">▶ Play Again</button>
+      <button class="btn ghost" id="menuBtn">Main Menu</button>
+    </div>
+  </div>
+
+  <div class="hint" id="hint"></div>
+</div>
+
+<script>
+/* ===========================================================================
+   GEMINI — mirror twin-snake. Single-file, no dependencies.
+   Sections: CONFIG · STATE · AUDIO · INPUT · GRID/SNAKE · UPDATE · RENDER ·
+             UI/MENUS · GAME LOOP · BOOT
+   =========================================================================== */
+
+/* ===== CONFIG ===== */
+const CFG = {
+  cols: 24,            // grid columns (EVEN, so a clean seam sits between cols 11|12)
+  rows: 18,            // grid rows
+  startLen: 3,         // starting body length per twin
+  startStep: 0.165,    // seconds per grid step at the start (lower = faster)
+  minStep: 0.072,      // fastest the game ever gets
+  stepRamp: 0.0019,    // step time removed per food eaten
+  growPerFood: 2,      // body segments gained per food (per twin)
+  foodScore: 10,       // base points per mirrored pair eaten
+  syncBonus: 15,       // extra points when both halves are eaten on the same step
+};
+
+// Heading vectors. Left/Right get MIRRORED for the amber twin (see applyTurn).
+const DIR = {
+  up:    { x: 0,  y: -1 },
+  down:  { x: 0,  y: 1  },
+  left:  { x: -1, y: 0  },
+  right: { x: 1,  y: 0  },
+};
+
+/* ===== STATE ===== */
+const GameState = { MENU:'MENU', PLAYING:'PLAYING', PAUSED:'PAUSED', GAME_OVER:'GAME_OVER' };
+let state = GameState.MENU;
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// view metrics (computed on resize)
+let view = { w: 0, h: 0, cell: 24, ox: 0, oy: 0, boardW: 0, boardH: 0 };
+
+let game = null;        // active game object (built by startGame)
+let best = 0;           // session best (in memory only — no localStorage)
+let shake = 0;          // screen-shake magnitude
+let particles = [];     // particle pool
+let popups = [];        // floating score text
+let flash = 0;          // brief full-board tint on crash/eat
+let syncTimer = 0;      // shows the SYNC pill for a moment
+
+/* ===== AUDIO ===== (synthesized Web Audio SFX, see GAME_AGENT.md §7) */
+const Sound = (() => {
+  let ctxA, muted = false;
+  const ensure = () => { if (!ctxA) ctxA = new (window.AudioContext || window.webkitAudioContext)(); };
+  const unlock = () => { ensure(); if (ctxA.state === 'suspended') ctxA.resume(); };
+
+  function tone({ freq=440, dur=0.12, type='square', vol=0.2, slide=0, delay=0 }) {
+    if (muted) return;
+    ensure();
+    const t0 = ctxA.currentTime + delay;
+    const osc = ctxA.createOscillator();
+    const gain = ctxA.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freq + slide), t0 + dur);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(vol, t0 + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(gain).connect(ctxA.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  }
+
+  const turn   = () => tone({ freq: 320, dur: 0.045, type: 'square',   vol: 0.06 });
+  const eat    = () => { tone({ freq: 540, dur: 0.10, type: 'triangle', vol: 0.18, slide: 360 });
+                         tone({ freq: 760, dur: 0.10, type: 'sine',     vol: 0.10, slide: 300, delay: 0.03 }); };
+  const sync   = () => { tone({ freq: 660, dur: 0.10, type: 'triangle', vol: 0.18, slide: 200 });
+                         tone({ freq: 990, dur: 0.16, type: 'triangle', vol: 0.16, slide: 300, delay: 0.06 }); };
+  const click  = () => tone({ freq: 460, dur: 0.05, type: 'square',   vol: 0.10 });
+  const crash  = () => { tone({ freq: 180, dur: 0.34, type: 'sawtooth', vol: 0.26, slide: -120 });
+                         tone({ freq: 90,  dur: 0.45, type: 'sawtooth', vol: 0.20, slide: -50, delay: 0.04 }); };
+  const lose   = () => { crash(); tone({ freq: 70, dur: 0.6, type: 'sine', vol: 0.18, slide: -30, delay: 0.12 }); };
+
+  return {
+    unlock, turn, eat, sync, click, crash, lose,
+    toggleMute: () => (muted = !muted),
+    get muted() { return muted; },
+  };
+})();
+
+function refreshMuteLabels() {
+  const txt = Sound.muted ? 'OFF' : 'ON';
+  ['muteState','muteState2'].forEach(id => { const e = document.getElementById(id); if (e) e.textContent = txt; });
+}
+
+/* ===== INPUT ===== */
+const keys = {};
+addEventListener('keydown', (e) => {
+  // Start / restart from menus with Enter
+  if (e.code === 'Enter') {
+    if (state === GameState.MENU) { startGame(); e.preventDefault(); return; }
+    if (state === GameState.GAME_OVER) { startGame(); e.preventDefault(); return; }
+  }
+  if (e.code === 'KeyM') { toggleMute(); }
+  if (e.code === 'Escape' || e.code === 'KeyP') {
+    if (state === GameState.PLAYING || state === GameState.PAUSED) { togglePause(); e.preventDefault(); }
+    return;
+  }
+  // Steering (only while playing)
+  if (state === GameState.PLAYING) {
+    let dir = null;
+    if (e.code === 'ArrowUp'    || e.code === 'KeyW') dir = 'up';
+    if (e.code === 'ArrowDown'  || e.code === 'KeyS') dir = 'down';
+    if (e.code === 'ArrowLeft'  || e.code === 'KeyA') dir = 'left';
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') dir = 'right';
+    if (dir) { queueTurn(dir); e.preventDefault(); }
+  }
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+  keys[e.code] = true;
+});
+addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+// Touch: swipe to steer; tap menus handled by buttons.
+let touchStart = null;
+canvas.addEventListener('touchstart', (e) => {
+  if (e.touches.length) { const t = e.touches[0]; touchStart = { x: t.clientX, y: t.clientY }; }
+}, { passive: true });
+canvas.addEventListener('touchend', (e) => {
+  if (!touchStart) return;
+  const t = (e.changedTouches && e.changedTouches[0]);
+  if (t && state === GameState.PLAYING) {
+    const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
+    if (Math.abs(dx) > 18 || Math.abs(dy) > 18) {
+      if (Math.abs(dx) > Math.abs(dy)) queueTurn(dx > 0 ? 'right' : 'left');
+      else queueTurn(dy > 0 ? 'down' : 'up');
+    }
+  }
+  touchStart = null;
+}, { passive: true });
+
+/* ===== GRID / SNAKE ===== */
+// A "turn" is requested as a logical direction (up/down/left/right). It is the
+// CYAN twin's intent; the amber twin gets the horizontal mirror. We queue at
+// most two turns so quick double-taps register on consecutive steps.
+function queueTurn(dir) {
+  if (!game) return;
+  const q = game.turnQueue;
+  if (q.length >= 2) return;
+  const base = q.length ? q[q.length - 1] : game.headingName;
+  // Disallow direct 180° reversals (snake can't fold back on itself).
+  if (isOpposite(dir, base)) return;
+  q.push(dir);
+}
+function isOpposite(a, b) {
+  return (a === 'up' && b === 'down') || (a === 'down' && b === 'up') ||
+         (a === 'left' && b === 'right') || (a === 'right' && b === 'left');
+}
+
+// Build a fresh game.
+function startGame() {
+  Sound.unlock();
+  const W = CFG.cols, H = CFG.rows;
+  const midRow = Math.floor(H / 2);
+
+  // Cyan twin lives in the LEFT half (cols 0..W/2-1), heading RIGHT toward seam-safe space.
+  // It spawns near the left wall so it has room. Amber is its mirror in the right half.
+  const cyan = [];
+  const startX = 3;
+  for (let i = 0; i < CFG.startLen; i++) cyan.push({ x: startX - i, y: midRow });
+
+  game = {
+    cols: W, rows: H,
+    cyan,                       // array of {x,y}; index 0 is head (left half)
+    amber: mirrorBody(cyan, W), // mirror-image spawn in the right half
+    headingName: 'right',       // cyan's current heading
+    heading: { ...DIR.right },
+    turnQueue: [],
+    step: CFG.startStep,        // seconds per move
+    acc: 0,                     // time accumulator
+    foodCyan: null,             // {x,y} in LEFT half  (independent target)
+    foodAmber: null,            // {x,y} in RIGHT half (independent target)
+    growCyan: 0,                // pending growth segments for cyan
+    growAmber: 0,               // pending growth segments for amber
+    eaten: 0,                   // total foods eaten (drives speed ramp)
+    score: 0,
+    alive: true,
+    prevCyan: cyan.map(s => ({ ...s })),  // for smooth interpolation
+    prevAmber: null,
+    interp: 1,                  // 0..1 between grid steps (for smooth render)
+  };
+  game.prevAmber = game.amber.map(s => ({ ...s }));
+  spawnFood('cyan');
+  spawnFood('amber');
+
+  particles = []; popups = []; shake = 0; flash = 0; syncTimer = 0;
+  setState(GameState.PLAYING);
+  updateHud();
+  setHint('Up/Down move both · Left/Right are mirrored · Esc to pause');
+}
+
+// Reflect a left-half body to the right half: x -> (W-1 - x).
+function mirrorBody(body, W) {
+  return body.map(s => ({ x: (W - 1) - s.x, y: s.y }));
+}
+
+// Place a fresh food for one side on a random empty cell within that side's
+// half. The two sides have INDEPENDENT food — that's what makes the mirrored
+// controls a genuine two-brain puzzle (and what makes a SYNC eat special).
+function spawnFood(side) {
+  const W = game.cols, H = game.rows, half = W / 2;
+  const body = side === 'cyan' ? game.cyan : game.amber;
+  const occupied = new Set();
+  for (const s of body) occupied.add(s.x + ',' + s.y);
+
+  const xMin = side === 'cyan' ? 0 : half;
+  const xMax = side === 'cyan' ? half : W;   // exclusive
+  const free = [];
+  for (let x = xMin; x < xMax; x++) {
+    for (let y = 0; y < H; y++) {
+      if (!occupied.has(x + ',' + y)) free.push({ x, y });
+    }
+  }
+  const food = free.length ? free[(Math.random() * free.length) | 0] : null;
+  if (side === 'cyan') game.foodCyan = food; else game.foodAmber = food;
+}
+
+/* ===== UPDATE ===== */
+function update(dt) {
+  // decay juice timers regardless of stepping
+  if (shake > 0) shake = Math.max(0, shake - dt * 26);
+  if (flash > 0) flash = Math.max(0, flash - dt * 3.4);
+  if (syncTimer > 0) { syncTimer -= dt; if (syncTimer <= 0) document.getElementById('syncpill').classList.remove('on'); }
+  updateParticles(dt);
+  updatePopups(dt);
+
+  if (!game) return;
+
+  // Death animation: once a twin crashes we keep rendering the explosion for a
+  // beat, then show the game-over panel. Driven here (not via setTimeout) so it
+  // can never be stranded by a state change mid-animation.
+  if (!game.alive) {
+    if (game.deathTimer > 0) {
+      game.deathTimer -= dt;
+      if (game.deathTimer <= 0) showGameOver(game.deathReason);
+    }
+    return;
+  }
+
+  game.acc += dt;
+  // advance whole grid steps; interp tracks progress toward the next one
+  while (game.acc >= game.step) {
+    game.acc -= game.step;
+    stepGame();
+    if (!game.alive) return;
+  }
+  game.interp = Math.min(1, game.acc / game.step);
+}
+
+// One discrete grid move for both twins.
+function stepGame() {
+  // resolve the next heading from the queue
+  if (game.turnQueue.length) {
+    const dir = game.turnQueue.shift();
+    if (!isOpposite(dir, game.headingName)) {
+      game.headingName = dir;
+      game.heading = { ...DIR[dir] };
+      Sound.turn();
+    }
+  }
+
+  // store previous positions for interpolation
+  game.prevCyan = game.cyan.map(s => ({ ...s }));
+  game.prevAmber = game.amber.map(s => ({ ...s }));
+
+  const hCyan = game.heading;                 // cyan moves by the chosen heading
+  const hAmber = { x: -hCyan.x, y: hCyan.y }; // amber mirrors horizontally
+
+  const newCyanHead  = { x: game.cyan[0].x  + hCyan.x,  y: game.cyan[0].y  + hCyan.y };
+  const newAmberHead = { x: game.amber[0].x + hAmber.x, y: game.amber[0].y + hAmber.y };
+
+  // --- collision checks (lose if EITHER twin fails) ---
+  const W = game.cols, H = game.rows;
+  let dead = false, reason = '';
+
+  // walls
+  if (newCyanHead.x < 0 || newCyanHead.x >= W || newCyanHead.y < 0 || newCyanHead.y >= H ||
+      newAmberHead.x < 0 || newAmberHead.x >= W || newAmberHead.y < 0 || newAmberHead.y >= H) {
+    dead = true; reason = 'Hit the wall';
+  }
+
+  // seam crossing: cyan must stay in left half (x < W/2), amber in right half (x >= W/2).
+  const half = W / 2;
+  if (!dead && (newCyanHead.x >= half || newAmberHead.x < half)) {
+    dead = true; reason = 'Crossed the seam';
+  }
+
+  // Detect eating BEFORE we know tail behaviour, so we can decide growth.
+  const onFoodC = game.foodCyan  && newCyanHead.x  === game.foodCyan.x  && newCyanHead.y  === game.foodCyan.y;
+  const onFoodA = game.foodAmber && newAmberHead.x === game.foodAmber.x && newAmberHead.y === game.foodAmber.y;
+
+  // A twin's tail vacates this step UNLESS that twin is growing or eating now.
+  const cyanGrows  = game.growCyan  > 0 || onFoodC;
+  const amberGrows = game.growAmber > 0 || onFoodA;
+
+  // body self collisions (each twin is confined to its own half, so the only
+  // bodies a head can hit are its own — but we test both for safety).
+  if (!dead) {
+    const occ = new Set();
+    const addBody = (body, grows) => {
+      const n = body.length;
+      for (let i = 0; i < n; i++) {
+        if (!grows && i === n - 1) continue; // tail cell becomes free this step
+        occ.add(body[i].x + ',' + body[i].y);
+      }
+    };
+    addBody(game.cyan,  cyanGrows);
+    addBody(game.amber, amberGrows);
+
+    const ck = newCyanHead.x + ',' + newCyanHead.y;
+    const ak = newAmberHead.x + ',' + newAmberHead.y;
+    if (occ.has(ck) || occ.has(ak)) { dead = true; reason = 'Bit a tail'; }
+    if (!dead && ck === ak) { dead = true; reason = 'Heads collided'; }
+  }
+
+  if (dead) { killGame(reason, newCyanHead, newAmberHead); return; }
+
+  // --- advance bodies ---
+  // A growing twin keeps its tail this step (consuming one queued segment if any);
+  // otherwise it drops the tail. This MUST match the tail-skip used in collision
+  // (cyanGrows/amberGrows) so a head never dies on a cell that is actually vacating.
+  game.cyan.unshift(newCyanHead);
+  if (cyanGrows) { if (game.growCyan > 0) game.growCyan--; } else game.cyan.pop();
+  game.amber.unshift(newAmberHead);
+  if (amberGrows) { if (game.growAmber > 0) game.growAmber--; } else game.amber.pop();
+
+  // --- eating ---
+  if (onFoodC || onFoodA) {
+    const synced = onFoodC && onFoodA;     // grabbed BOTH foods on one step
+    let gained = 0;
+    if (onFoodC) { game.growCyan  += CFG.growPerFood; game.eaten++; gained += CFG.foodScore; }
+    if (onFoodA) { game.growAmber += CFG.growPerFood; game.eaten++; gained += CFG.foodScore; }
+    if (synced) gained += CFG.syncBonus;
+    game.score += gained;
+
+    if (onFoodC) { const cc = cellCenter(game.foodCyan.x, game.foodCyan.y);
+      spawnBurst(cc.x, cc.y, '#37e0ff', 14); if (!synced) addPopup(cc.x, cc.y - view.cell, '+' + CFG.foodScore, '#37e0ff'); }
+    if (onFoodA) { const ac = cellCenter(game.foodAmber.x, game.foodAmber.y);
+      spawnBurst(ac.x, ac.y, '#ffb347', 14); if (!synced) addPopup(ac.x, ac.y - view.cell, '+' + CFG.foodScore, '#ffb347'); }
+
+    if (synced) {
+      const cc = cellCenter(game.foodCyan.x, game.foodCyan.y);
+      const ac = cellCenter(game.foodAmber.x, game.foodAmber.y);
+      addPopup((cc.x + ac.x) / 2, (cc.y + ac.y) / 2 - view.cell, 'SYNC +' + gained, '#ffd34d');
+      Sound.sync();
+      const pill = document.getElementById('syncpill');
+      pill.textContent = 'SYNC +' + CFG.syncBonus; pill.classList.add('on'); syncTimer = 1.2;
+      shake = Math.max(shake, 6);
+    } else {
+      Sound.eat();
+      shake = Math.max(shake, 3);
+    }
+    flash = Math.max(flash, 0.5);
+
+    // speed up a touch per food eaten
+    game.step = Math.max(CFG.minStep, game.step - CFG.stepRamp);
+    if (onFoodC) spawnFood('cyan');
+    if (onFoodA) spawnFood('amber');
+    updateHud();
+  }
+}
+
+function killGame(reason, cHead, aHead) {
+  game.alive = false;
+  game.deathTimer = 0.62;     // seconds of explosion before the panel (see update)
+  game.deathReason = reason;
+  // explosive feedback at both heads
+  const ch = cHead ? cellCenter(clampCell(cHead.x), clampCell(cHead.y, true)) : null;
+  if (ch) spawnBurst(ch.x, ch.y, '#37e0ff', 26);
+  const ah = aHead ? cellCenter(clampCell(aHead.x), clampCell(aHead.y, true)) : null;
+  if (ah) spawnBurst(ah.x, ah.y, '#ffb347', 26);
+  shake = 14; flash = 1;
+  Sound.lose();
+  best = Math.max(best, game.score);
+  setHint('');
+}
+function clampCell(v, isRow) {
+  const max = (isRow ? game.rows : game.cols) - 1;
+  return Math.max(0, Math.min(max, v));
+}
+
+/* ----- particles & popups (juice) ----- */
+function spawnBurst(x, y, color, count = 12) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 40 + Math.random() * 170;
+    particles.push({
+      x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      life: 1, max: 0.5 + Math.random() * 0.4,
+      size: 2 + Math.random() * 3, color,
+    });
+  }
+}
+function updateParticles(dt) {
+  for (const p of particles) {
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vx *= 0.90; p.vy *= 0.90;
+    p.life -= dt / p.max;
+  }
+  particles = particles.filter(p => p.life > 0);
+}
+function addPopup(x, y, text, color) { popups.push({ x, y, text, color, life: 1 }); }
+function updatePopups(dt) {
+  for (const p of popups) { p.y -= dt * 42; p.life -= dt * 0.9; }
+  popups = popups.filter(p => p.life > 0);
+}
+
+/* ===== RENDER ===== */
+function cellCenter(cx, cy) {
+  return { x: view.ox + (cx + 0.5) * view.cell, y: view.oy + (cy + 0.5) * view.cell };
+}
+
+function render() {
+  ctx.clearRect(0, 0, view.w, view.h);
+
+  // subtle vignette background
+  ctx.fillStyle = '#070a12';
+  ctx.fillRect(0, 0, view.w, view.h);
+
+  ctx.save();
+  // screen shake
+  if (shake > 0.1) {
+    const sx = (Math.random() - 0.5) * shake;
+    const sy = (Math.random() - 0.5) * shake;
+    ctx.translate(sx, sy);
+  }
+
+  drawBoard();
+
+  if (game) {
+    drawFood();
+    drawSnake(game.amber, game.prevAmber, '#ffb347', '#7a4d12');
+    drawSnake(game.cyan,  game.prevCyan,  '#37e0ff', '#0d4f63');
+  }
+
+  drawParticles();
+  drawPopups();
+
+  ctx.restore();
+
+  // crash/eat flash tint (drawn over board, ignores shake)
+  if (flash > 0.01) {
+    ctx.fillStyle = `rgba(255,255,255,${flash * (game && !game.alive ? 0.16 : 0.05)})`;
+    ctx.fillRect(0, 0, view.w, view.h);
+  }
+}
+
+function drawBoard() {
+  const { ox, oy, cell, cols, rows, boardW, boardH } = viewBoard();
+
+  // board backdrop with a faint inner glow
+  ctx.fillStyle = '#0a0f1c';
+  roundRect(ox - 6, oy - 6, boardW + 12, boardH + 12, 14);
+  ctx.fill();
+
+  // grid cells (very subtle checker)
+  for (let x = 0; x < cols; x++) {
+    for (let y = 0; y < rows; y++) {
+      const left = x < cols / 2;
+      ctx.fillStyle = (x + y) % 2 === 0
+        ? (left ? 'rgba(55,224,255,0.022)' : 'rgba(255,179,71,0.022)')
+        : 'rgba(255,255,255,0.012)';
+      ctx.fillRect(ox + x * cell, oy + y * cell, cell, cell);
+    }
+  }
+
+  // the SEAM — glowing centerline that neither twin may cross
+  const seamX = ox + (cols / 2) * cell;
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 360);
+  ctx.save();
+  ctx.strokeStyle = `rgba(255,255,255,${0.18 + pulse * 0.12})`;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 8]);
+  ctx.beginPath();
+  ctx.moveTo(seamX, oy);
+  ctx.lineTo(seamX, oy + boardH);
+  ctx.stroke();
+  ctx.restore();
+
+  // board border
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  ctx.lineWidth = 1.5;
+  roundRect(ox - 6, oy - 6, boardW + 12, boardH + 12, 14);
+  ctx.stroke();
+}
+
+function viewBoard() {
+  return { ox: view.ox, oy: view.oy, cell: view.cell, cols: game ? game.cols : CFG.cols,
+           rows: game ? game.rows : CFG.rows, boardW: view.boardW, boardH: view.boardH };
+}
+
+function drawFood() {
+  if (!game.foodCyan) return;
+  const t = performance.now() / 300;
+  const r = view.cell * (0.30 + 0.05 * Math.sin(t));
+  for (const [f, col] of [[game.foodCyan, '#37e0ff'], [game.foodAmber, '#ffb347']]) {
+    const c = cellCenter(f.x, f.y);
+    ctx.save();
+    ctx.shadowColor = col; ctx.shadowBlur = 16;
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath(); ctx.arc(c.x - r * 0.28, c.y - r * 0.28, r * 0.3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// Draw a snake with smooth interpolation between grid cells.
+function drawSnake(body, prev, headCol, tailCol) {
+  if (!body || !body.length) return;
+  const t = game.alive ? game.interp : 1;
+  const cell = view.cell;
+
+  // interpolated centers
+  const pts = body.map((seg, i) => {
+    const p = prev && prev[i] ? prev[i] : seg;
+    const ix = p.x + (seg.x - p.x) * t;
+    const iy = p.y + (seg.y - p.y) * t;
+    return cellCenter(ix, iy);
+  });
+
+  // body as a thick rounded poly-line
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.strokeStyle = headCol;
+  ctx.shadowColor = headCol; ctx.shadowBlur = 12;
+  ctx.lineWidth = cell * 0.74;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+
+  // inner darker core for depth
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = tailCol;
+  ctx.lineWidth = cell * 0.34;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+  ctx.restore();
+
+  // head with eyes (orient by heading)
+  const head = pts[0];
+  ctx.save();
+  ctx.fillStyle = headCol;
+  ctx.shadowColor = headCol; ctx.shadowBlur = 14;
+  ctx.beginPath(); ctx.arc(head.x, head.y, cell * 0.40, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // determine this body's heading from the last move
+  let hx = 1, hy = 0;
+  if (prev && prev[0]) { hx = Math.sign(body[0].x - prev[0].x) || 0; hy = Math.sign(body[0].y - prev[0].y) || 0; if (!hx && !hy) hx = 1; }
+  const perpX = -hy, perpY = hx;
+  const eo = cell * 0.16, fo = cell * 0.12;
+  for (const s of [1, -1]) {
+    const ex = head.x + hx * fo + perpX * eo * s;
+    const ey = head.y + hy * fo + perpY * eo * s;
+    ctx.fillStyle = '#06121a';
+    ctx.beginPath(); ctx.arc(ex, ey, cell * 0.085, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (0.5 + p.life * 0.5), 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+function drawPopups() {
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const p of popups) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life));
+    ctx.font = `800 ${Math.round(view.cell * 0.7)}px ui-monospace, Menlo, monospace`;
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 6;
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/* ===== UI / MENUS ===== */
+function setState(s) {
+  state = s;
+  document.getElementById('menu').classList.toggle('hidden', s !== GameState.MENU);
+  document.getElementById('pause').classList.toggle('hidden', s !== GameState.PAUSED);
+  document.getElementById('over').classList.toggle('hidden', s !== GameState.GAME_OVER);
+}
+
+function togglePause() {
+  if (state === GameState.PLAYING) {
+    if (game && !game.alive) return;   // don't pause mid-death; let it resolve
+    setState(GameState.PAUSED);
+    Sound.click();
+  } else if (state === GameState.PAUSED) {
+    resumeGame();
+  }
+}
+function resumeGame() {
+  setState(GameState.PLAYING);
+  Sound.click();
+}
+function returnToMenu() {
+  game = null;
+  setState(GameState.MENU);
+  Sound.click();
+}
+function showGameOver(reason) {
+  setState(GameState.GAME_OVER);
+  document.getElementById('overHead').textContent = 'CRASHED';
+  document.getElementById('overScore').textContent = game.score;
+  document.getElementById('overSub').innerHTML =
+    `${reason} &nbsp;·&nbsp; Best <b>${best}</b>` + (game.score >= best && game.score > 0 ? ' &nbsp;★ NEW BEST' : '');
+}
+function toggleMute() {
+  Sound.toggleMute();
+  if (!Sound.muted) Sound.click();
+  refreshMuteLabels();
+}
+
+function updateHud() {
+  if (!game) return;
+  document.getElementById('hudScore').textContent = game.score;
+  // twins can differ in length now; show the longer one (your worst constraint)
+  document.getElementById('hudLen').textContent = Math.max(game.cyan.length, game.amber.length);
+}
+function setHint(t) { document.getElementById('hint').textContent = t; }
+
+// wire buttons
+document.getElementById('playBtn').addEventListener('click', () => { Sound.click(); startGame(); });
+document.getElementById('resumeBtn').addEventListener('click', () => resumeGame());
+document.getElementById('restartBtn').addEventListener('click', () => { Sound.click(); startGame(); });
+document.getElementById('quitBtn').addEventListener('click', () => returnToMenu());
+document.getElementById('againBtn').addEventListener('click', () => { Sound.click(); startGame(); });
+document.getElementById('menuBtn').addEventListener('click', () => returnToMenu());
+
+/* ===== GAME LOOP ===== */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05); // clamp to avoid tab-out jumps
+  last = now;
+
+  if (state === GameState.PLAYING) update(dt);
+  else { updateParticles(dt); updatePopups(dt); if (shake > 0) shake = Math.max(0, shake - dt * 26); if (flash > 0) flash = Math.max(0, flash - dt * 3.4); }
+
+  render();
+  requestAnimationFrame(frame);
+}
+
+/* ===== BOOT ===== */
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  view.w = innerWidth; view.h = innerHeight;
+  canvas.width = innerWidth * dpr;
+  canvas.height = innerHeight * dpr;
+  canvas.style.width = innerWidth + 'px';
+  canvas.style.height = innerHeight + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // fit the grid into the viewport with margins; keep square cells
+  const cols = CFG.cols, rows = CFG.rows;
+  const marginX = Math.min(60, innerWidth * 0.06);
+  const marginTop = 86, marginBottom = 46;
+  const availW = innerWidth - marginX * 2;
+  const availH = innerHeight - marginTop - marginBottom;
+  const cell = Math.max(10, Math.floor(Math.min(availW / cols, availH / rows)));
+  view.cell = cell;
+  view.boardW = cell * cols;
+  view.boardH = cell * rows;
+  view.ox = Math.floor((innerWidth - view.boardW) / 2);
+  view.oy = Math.floor(marginTop + (availH - view.boardH) / 2);
+}
+addEventListener('resize', resize);
+resize();
+refreshMuteLabels();
+setHint('');
+setState(GameState.MENU);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
