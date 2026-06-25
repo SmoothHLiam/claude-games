@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>LUMEN — Light Is Life</title>
+<!--
+  ============================================================================
+  LUMEN  —  a top-down survival in the dark.
+  ----------------------------------------------------------------------------
+  GENRE   : Top-down survival / arena.
+  TWIST   : Your LIGHT is one meter that is your sight, your ammo, AND your
+            life. It drains every second. Firing a bolt spends light. Getting
+            touched by a shade costs a chunk. Killing shades drops MOTES that
+            refuel you — so you must keep venturing into the dark to feed the
+            light that keeps the dark out. When the light goes to zero, you die.
+            FLARE spends a big burst of light to blast everything around you
+            (a gamble that pays back motes in a crowd).
+  CONTROLS: WASD / arrows move · mouse aim · click / hold to fire ·
+            Space or right-click = FLARE · Esc / P pause · M mute.
+            Touch: drag to move, auto-fires at the nearest shade.
+  GOAL    : Endless. Survive the deepening dark; climb the score.
+  Single self-contained file. Canvas 2D + Web Audio. No assets, no build step.
+  Open index.html directly in any modern browser.
+  ============================================================================
+-->
+<style>
+  :root{
+    --bg:#05060a; --ink:#fff4d6; --dim:#8f8a78; --gold:#ffe08a; --amber:#ffc24d;
+    --mote:#5cf0ff; --danger:#ff4d5e;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    -webkit-user-select:none; user-select:none; touch-action:none;
+  }
+  #wrap{position:fixed;inset:0}
+  canvas{display:block;width:100%;height:100%;background:radial-gradient(900px 700px at 50% 42%,#0c0d16,#05060a 72%)}
+
+  /* ---------- overlays ---------- */
+  .overlay{
+    position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center;
+    background:rgba(4,5,10,0.82);backdrop-filter:blur(3px);z-index:10;padding:6vh 6vw;
+    transition:opacity .25s ease;
+  }
+  .overlay.hidden{display:none}
+  .title{
+    font-size:clamp(48px,15vw,132px);font-weight:800;letter-spacing:0.1em;line-height:0.9;
+    background:linear-gradient(170deg,#fff7df,var(--gold) 52%,var(--amber));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    filter:drop-shadow(0 0 30px rgba(255,194,77,0.45));
+  }
+  .sub{margin-top:8px;color:var(--gold);letter-spacing:0.34em;font-size:clamp(11px,2.6vw,15px);text-transform:uppercase}
+  .twist{margin-top:20px;max-width:580px;color:var(--ink);font-size:clamp(13px,2.7vw,17px);line-height:1.6}
+  .twist b{color:var(--gold)}
+  .ctrls{margin-top:18px;color:var(--dim);font-size:clamp(11px,2.4vw,14px);line-height:1.9;max-width:540px}
+  .ctrls b{color:var(--ink)}
+  .row{margin-top:26px;display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+  button{
+    font-family:inherit;font-size:clamp(14px,3vw,18px);font-weight:700;letter-spacing:0.06em;
+    color:#241a05;background:linear-gradient(180deg,var(--gold),var(--amber));
+    border:none;border-radius:999px;padding:14px 30px;cursor:pointer;
+    box-shadow:0 8px 24px rgba(255,194,77,0.32);transition:transform .12s ease,box-shadow .12s ease,filter .12s ease;
+  }
+  button:hover{transform:translateY(-2px);filter:brightness(1.08);box-shadow:0 12px 30px rgba(255,194,77,0.5)}
+  button:active{transform:translateY(0)}
+  button.ghost{background:transparent;color:var(--ink);border:1.5px solid rgba(255,244,214,0.3);box-shadow:none}
+  button.ghost:hover{border-color:var(--gold);color:var(--gold)}
+  .big{font-size:clamp(30px,8vw,60px);font-weight:800;letter-spacing:0.05em}
+  .stat{margin-top:10px;color:var(--dim);font-size:clamp(13px,2.8vw,17px)}
+  .stat b{color:var(--gold);font-size:1.2em}
+  .hint{margin-top:22px;color:var(--dim);font-size:11.5px;letter-spacing:0.18em;text-transform:uppercase}
+  .mute{position:absolute;top:14px;right:14px;font-size:12px;padding:9px 14px;background:rgba(255,255,255,0.06);
+    color:var(--ink);border:1px solid rgba(255,255,255,0.14);border-radius:999px;box-shadow:none;z-index:11}
+  .mute:hover{border-color:var(--gold);color:var(--gold);transform:none;filter:none}
+  @media (max-width:520px){ .ctrls{font-size:12px} }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game"></canvas>
+  <button id="muteBtn" class="mute">♪ SOUND ON</button>
+
+  <!-- MAIN MENU -->
+  <div id="menu" class="overlay">
+    <div class="title">LUMEN</div>
+    <div class="sub">Light Is Life</div>
+    <div class="twist">Twist — <b>your light is your sight, your ammo, and your life.</b> It drains every second. Every bolt you fire spends it. Killing shades drops <b>motes</b> that refuel you — so you must keep feeding the light that keeps the dark out.</div>
+    <div class="ctrls">
+      <b>Move</b> — WASD / arrows &nbsp;·&nbsp; <b>Aim</b> — mouse<br>
+      <b>Fire</b> — click / hold &nbsp;·&nbsp; <b>Flare</b> — Space / right-click<br>
+      <b>Pause</b> — Esc / P &nbsp;·&nbsp; <b>Mute</b> — M &nbsp;·&nbsp; touch: drag to move
+    </div>
+    <div class="row">
+      <button id="playBtn">▶ PLAY</button>
+    </div>
+    <div class="hint">Don't let the light go out</div>
+  </div>
+
+  <!-- PAUSE -->
+  <div id="pause" class="overlay hidden">
+    <div class="big">PAUSED</div>
+    <div class="row">
+      <button id="resumeBtn">RESUME</button>
+      <button id="restartBtn" class="ghost">RESTART</button>
+      <button id="quitBtn" class="ghost">QUIT TO MENU</button>
+    </div>
+    <div class="hint">Esc / P to resume</div>
+  </div>
+
+  <!-- GAME OVER -->
+  <div id="gameover" class="overlay hidden">
+    <div class="big" style="color:var(--danger)">THE LIGHT WENT OUT</div>
+    <div class="stat">Score &nbsp;<b id="goScore">0</b></div>
+    <div class="stat">Survived &nbsp;<b id="goTime">0s</b></div>
+    <div class="stat" style="margin-top:4px">Best &nbsp;<b id="goBest">0</b></div>
+    <div class="row">
+      <button id="againBtn">PLAY AGAIN</button>
+      <button id="menuBtn" class="ghost">MAIN MENU</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===================================================================== */
+/* ===== CONFIG ========================================================= */
+/* ===================================================================== */
+const CFG = {
+  player:   { r: 13, accel: 2400, maxSpeed: 360, friction: 0.86 },
+  lumMax:   100,
+  lumStart: 62,
+  lumDrain: 2.4,        // light lost per second (passive)
+  boltCost: 1.6,        // light spent per bolt
+  hitCost:  17,         // light lost when a shade touches you
+  moteVal:  10,         // light gained per mote collected
+  fireCD:   0.15,       // seconds between bolts when holding
+  boltSpeed:760, boltR: 4, boltLife: 0.9,
+  flareCost: 22, flareKillR: 240, flareCD: 3.4,
+  invuln:   0.55,       // i-frames after a hit
+  // light radius (vision) as a function of current lumens
+  lightBase: 78, lightPer: 1.55,
+};
+
+/* ===================================================================== */
+/* ===== STATE ========================================================== */
+/* ===================================================================== */
+const GameState = { MENU:'MENU', PLAYING:'PLAYING', PAUSED:'PAUSED', GAME_OVER:'GAME_OVER' };
+let state = GameState.MENU;
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0;                 // CSS pixel size of the canvas
+
+let player, lumens, bolts, shades, motes, particles, popups;
+let time, score, best = 0;
+let spawnTimer, fireTimer, flareTimer, invulnTimer;
+let shake, flash, lowPulse, lightFlicker;
+let aim = { x: 0, y: 0 };
+
+function resetGame(){
+  player = { x: W/2, y: H/2, vx: 0, vy: 0, r: CFG.player.r };
+  lumens = CFG.lumStart;
+  bolts = []; shades = []; motes = []; particles = []; popups = [];
+  time = 0; score = 0;
+  spawnTimer = 0.8; fireTimer = 0; flareTimer = 0; invulnTimer = 0;
+  shake = 0; flash = 0; lowPulse = 0; lightFlicker = 0;
+  aim.x = W/2; aim.y = H/2 - 100;
+}
+
+/* ===================================================================== */
+/* ===== AUDIO (synthesized Web Audio SFX) ============================= */
+/* ===================================================================== */
+const Sound = (() => {
+  let ctxA; let muted = false;
+  const ensure = () => { if (!ctxA) ctxA = new (window.AudioContext || window.webkitAudioContext)(); };
+  const unlock = () => { ensure(); if (ctxA.state === 'suspended') ctxA.resume(); };
+
+  function tone({ freq=440, dur=0.12, type='square', vol=0.2, slide=0, delay=0 }){
+    if (muted) return; ensure();
+    const t0 = ctxA.currentTime + delay;
+    const osc = ctxA.createOscillator(), gain = ctxA.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freq + slide), t0 + dur);
+    gain.gain.setValueAtTime(vol, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(gain).connect(ctxA.destination);
+    osc.start(t0); osc.stop(t0 + dur);
+  }
+  // noise burst for the flare / impacts
+  function noise({ dur=0.25, vol=0.25, lp=900, delay=0 }){
+    if (muted) return; ensure();
+    const t0 = ctxA.currentTime + delay;
+    const n = Math.floor(ctxA.sampleRate * dur);
+    const buf = ctxA.createBuffer(1, n, ctxA.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i=0;i<n;i++) d[i] = (Math.random()*2-1) * (1 - i/n);
+    const src = ctxA.createBufferSource(); src.buffer = buf;
+    const filt = ctxA.createBiquadFilter(); filt.type='lowpass'; filt.frequency.value = lp;
+    const gain = ctxA.createGain();
+    gain.gain.setValueAtTime(vol, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(filt).connect(gain).connect(ctxA.destination);
+    src.start(t0); src.stop(t0 + dur);
+  }
+
+  const shoot   = () => tone({ freq: 720, dur: 0.08, type:'square',   vol:0.10, slide:-360 });
+  const kill    = () => { tone({ freq: 240, dur:0.12, type:'sawtooth', vol:0.18, slide:-120 }); noise({dur:0.12,vol:0.12,lp:1400}); };
+  const collect = () => tone({ freq: 980, dur: 0.12, type:'triangle', vol:0.18, slide: 520 });
+  const hurt    = () => { tone({ freq: 150, dur:0.28, type:'sawtooth', vol:0.26, slide:-90 }); noise({dur:0.2,vol:0.2,lp:700}); };
+  const flare   = () => { noise({dur:0.4,vol:0.32,lp:2200}); tone({freq:300,dur:0.4,type:'triangle',vol:0.2,slide:600}); };
+  const click   = () => tone({ freq: 520, dur: 0.05, type:'square', vol:0.12 });
+  const lose    = () => { tone({freq:300,dur:0.5,type:'sawtooth',vol:0.22,slide:-220}); tone({freq:90,dur:0.7,type:'sine',vol:0.2,slide:-40,delay:0.12}); };
+
+  return { unlock, shoot, kill, collect, hurt, flare, click, lose,
+    toggleMute: () => (muted = !muted), get muted(){ return muted; } };
+})();
+
+/* ===================================================================== */
+/* ===== INPUT ========================================================== */
+/* ===================================================================== */
+const keys = {};
+addEventListener('keydown', (e) => {
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+  if (e.repeat) return;
+  keys[e.code] = true;
+  if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
+  if (e.code === 'KeyM') toggleMute();
+  if (e.code === 'Space' && state === GameState.PLAYING) doFlare();
+});
+addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+// mouse aim + fire
+canvas.addEventListener('mousemove', (e) => {
+  const r = canvas.getBoundingClientRect();
+  aim.x = e.clientX - r.left; aim.y = e.clientY - r.top;
+});
+let firing = false;
+canvas.addEventListener('mousedown', (e) => {
+  if (state !== GameState.PLAYING) return;
+  if (e.button === 2) { doFlare(); return; }
+  firing = true;
+});
+addEventListener('mouseup', () => { firing = false; });
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// touch: drag to move toward finger, auto-fire at nearest shade
+let touchTarget = null, touchFiring = false;
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const t = e.changedTouches[0], r = canvas.getBoundingClientRect();
+  touchTarget = { x: t.clientX - r.left, y: t.clientY - r.top };
+  touchFiring = state === GameState.PLAYING;
+}, { passive:false });
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const t = e.changedTouches[0], r = canvas.getBoundingClientRect();
+  touchTarget = { x: t.clientX - r.left, y: t.clientY - r.top };
+}, { passive:false });
+canvas.addEventListener('touchend', (e) => { e.preventDefault(); touchTarget = null; touchFiring = false; }, { passive:false });
+
+/* ===================================================================== */
+/* ===== HELPERS ======================================================== */
+/* ===================================================================== */
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lightRadius = () => CFG.lightBase + lumens * CFG.lightPer;
+
+function spawnBurst(x, y, color, count, spd = 3, life = 0.7){
+  for (let i = 0; i < count; i++){
+    const a = Math.random() * Math.PI * 2, s = rand(0.4, 1) * spd * 60;
+    particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life, max: life, color, r: rand(1.5, 3.5) });
+  }
+}
+function popup(x, y, text, color){ popups.push({ x, y, vy: -42, life: 1, text, color }); }
+
+/* ===================================================================== */
+/* ===== SPAWNING & DIFFICULTY ========================================= */
+/* ===================================================================== */
+function difficulty(){
+  // ramps smoothly with time survived
+  const t = time;
+  return {
+    spawnInterval: Math.max(0.34, 1.5 - t * 0.012),
+    shadeSpeed:    74 + t * 1.5,
+    twoHpChance:   clamp((t - 25) * 0.012, 0, 0.45),
+  };
+}
+function spawnShade(){
+  const d = difficulty();
+  // spawn just beyond a screen edge so shades loom in from the dark
+  const m = 50; let x, y;
+  const side = Math.floor(Math.random() * 4);
+  if (side === 0){ x = rand(-m, W+m); y = -m; }
+  else if (side === 1){ x = W+m; y = rand(-m, H+m); }
+  else if (side === 2){ x = rand(-m, W+m); y = H+m; }
+  else { x = -m; y = rand(-m, H+m); }
+  const hp = Math.random() < d.twoHpChance ? 2 : 1;
+  shades.push({
+    x, y, vx: 0, vy: 0, r: hp === 2 ? 17 : 13, hp, maxhp: hp,
+    spd: d.shadeSpeed * rand(0.85, 1.12), seed: rand(0, 99), glow: 0, wob: rand(0, 6.28),
+  });
+}
+
+/* ===================================================================== */
+/* ===== FIRING & FLARE ================================================= */
+/* ===================================================================== */
+function fireBolt(tx, ty){
+  if (lumens <= CFG.boltCost) return;
+  const dx = tx - player.x, dy = ty - player.y, d = Math.hypot(dx, dy) || 1;
+  const sp = CFG.boltSpeed;
+  bolts.push({ x: player.x, y: player.y, vx: dx/d*sp, vy: dy/d*sp, life: CFG.boltLife });
+  lumens -= CFG.boltCost;
+  // muzzle flash
+  spawnBurst(player.x + dx/d*16, player.y + dy/d*16, '#fff2c0', 4, 1.6, 0.22);
+  Sound.shoot();
+}
+function doFlare(){
+  if (flareTimer > 0 || lumens < CFG.flareCost) return;
+  lumens -= CFG.flareCost;
+  flareTimer = CFG.flareCD;
+  shake = Math.max(shake, 14); flash = Math.max(flash, 0.9);
+  // expanding visual ring
+  particles.push({ ring:true, x:player.x, y:player.y, r:0, max:0.42, life:0.42, color:'#ffe9a8' });
+  let killed = 0;
+  for (let i = shades.length - 1; i >= 0; i--){
+    const s = shades[i];
+    if (Math.hypot(s.x - player.x, s.y - player.y) < CFG.flareKillR){
+      killShade(i, true); killed++;
+    }
+  }
+  // a chunk of light radiating outward
+  spawnBurst(player.x, player.y, '#ffd36b', 26, 4.2, 0.8);
+  Sound.flare();
+}
+function killShade(i, fromFlare){
+  const s = shades[i];
+  shades.splice(i, 1);
+  spawnBurst(s.x, s.y, '#7c6bd8', 14, 2.6, 0.7);
+  // drop a mote (flare drops slightly fewer to keep it a gamble at low counts)
+  if (!fromFlare || Math.random() < 0.8){
+    motes.push({ x: s.x, y: s.y, vx: rand(-30,30), vy: rand(-30,30), life: 9, r: 6, val: CFG.moteVal });
+  }
+  const gain = 8 * (1 + Math.floor(time/20));
+  score += gain;
+  if (!fromFlare) popup(s.x, s.y, '+' + gain, '#ffe08a');
+  Sound.kill();
+}
+
+/* ===================================================================== */
+/* ===== UPDATE ========================================================= */
+/* ===================================================================== */
+function update(dt){
+  time += dt;
+  score += dt * 4;                          // small score-over-time for surviving
+
+  // ---- timers ----
+  if (fireTimer > 0) fireTimer -= dt;
+  if (flareTimer > 0) flareTimer -= dt;
+  if (invulnTimer > 0) invulnTimer -= dt;
+  lightFlicker += dt;
+
+  // ---- passive light drain (the core pressure) ----
+  lumens -= CFG.lumDrain * dt;
+
+  // ---- player movement ----
+  let ax = 0, ay = 0;
+  if (keys['KeyW'] || keys['ArrowUp'])    ay -= 1;
+  if (keys['KeyS'] || keys['ArrowDown'])  ay += 1;
+  if (keys['KeyA'] || keys['ArrowLeft'])  ax -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) ax += 1;
+  if (touchTarget){                         // touch: steer toward finger
+    const dx = touchTarget.x - player.x, dy = touchTarget.y - player.y, d = Math.hypot(dx,dy);
+    if (d > 6){ ax += dx/d; ay += dy/d; }
+  }
+  const al = Math.hypot(ax, ay);
+  if (al > 0){ ax /= al; ay /= al; }
+  player.vx += ax * CFG.player.accel * dt;
+  player.vy += ay * CFG.player.accel * dt;
+  player.vx *= Math.pow(CFG.player.friction, dt * 60);
+  player.vy *= Math.pow(CFG.player.friction, dt * 60);
+  const sp = Math.hypot(player.vx, player.vy);
+  if (sp > CFG.player.maxSpeed){ player.vx = player.vx/sp*CFG.player.maxSpeed; player.vy = player.vy/sp*CFG.player.maxSpeed; }
+  player.x = clamp(player.x + player.vx * dt, player.r, W - player.r);
+  player.y = clamp(player.y + player.vy * dt, player.r, H - player.r);
+
+  // ---- firing ----
+  if (touchTarget && touchFiring){
+    // auto-aim at the nearest shade for touch players
+    let best = null, bd = 1e9;
+    for (const s of shades){ const d = Math.hypot(s.x-player.x, s.y-player.y); if (d < bd){ bd = d; best = s; } }
+    if (best){ aim.x = best.x; aim.y = best.y; }
+  }
+  if ((firing || (touchTarget && touchFiring)) && fireTimer <= 0){
+    fireBolt(aim.x, aim.y);
+    fireTimer = CFG.fireCD;
+  }
+
+  // ---- bolts ----
+  for (let i = bolts.length - 1; i >= 0; i--){
+    const b = bolts[i];
+    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    if (b.life <= 0 || b.x < -20 || b.x > W+20 || b.y < -20 || b.y > H+20){ bolts.splice(i,1); continue; }
+    for (let j = shades.length - 1; j >= 0; j--){
+      const s = shades[j];
+      if (Math.hypot(b.x - s.x, b.y - s.y) < s.r + CFG.boltR){
+        bolts.splice(i,1);
+        s.hp--; s.glow = 1; shake = Math.max(shake, 2);
+        spawnBurst(b.x, b.y, '#fff2c0', 5, 1.8, 0.25);
+        if (s.hp <= 0) killShade(j, false);
+        break;
+      }
+    }
+  }
+
+  // ---- shades (home toward player) ----
+  for (let i = shades.length - 1; i >= 0; i--){
+    const s = shades[i];
+    const dx = player.x - s.x, dy = player.y - s.y, d = Math.hypot(dx, dy) || 1;
+    // gentle wobble so they don't move in dead-straight lines
+    s.wob += dt * 3;
+    const wob = Math.sin(s.wob) * 0.35;
+    const nx = dx/d, ny = dy/d;
+    s.vx = (nx * Math.cos(wob) - ny * Math.sin(wob)) * s.spd;
+    s.vy = (nx * Math.sin(wob) + ny * Math.cos(wob)) * s.spd;
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    s.glow *= Math.pow(0.02, dt);            // decay hit-glow
+
+    if (d < s.r + player.r && invulnTimer <= 0){
+      // contact: lose light, knockback, destroy the shade
+      lumens -= CFG.hitCost;
+      invulnTimer = CFG.invuln;
+      shake = Math.max(shake, 12); flash = Math.max(flash, 0.7);
+      player.vx -= nx * 320; player.vy -= ny * 320;
+      spawnBurst(s.x, s.y, '#ff6b7a', 16, 3.2, 0.7);
+      popup(player.x, player.y - 22, '-' + CFG.hitCost, '#ff4d5e');
+      shades.splice(i, 1);
+      Sound.hurt();
+    }
+  }
+
+  // ---- motes (drift, fade, get collected) ----
+  for (let i = motes.length - 1; i >= 0; i--){
+    const m = motes[i];
+    m.x += m.vx * dt; m.y += m.vy * dt;
+    m.vx *= Math.pow(0.2, dt); m.vy *= Math.pow(0.2, dt);
+    m.life -= dt;
+    // gentle magnet pull when close, so collecting feels good
+    const dx = player.x - m.x, dy = player.y - m.y, d = Math.hypot(dx, dy) || 1;
+    if (d < 90){ m.x += dx/d * 220 * dt; m.y += dy/d * 220 * dt; }
+    if (d < player.r + m.r + 4){
+      lumens = Math.min(CFG.lumMax, lumens + m.val);
+      score += 5;
+      spawnBurst(m.x, m.y, '#9cf6ff', 8, 1.8, 0.45);
+      popup(m.x, m.y - 10, '+light', '#5cf0ff');
+      motes.splice(i, 1); Sound.collect();
+      continue;
+    }
+    if (m.life <= 0){ motes.splice(i, 1); }
+  }
+
+  // ---- particles ----
+  for (let i = particles.length - 1; i >= 0; i--){
+    const p = particles[i];
+    p.life -= dt;
+    if (p.ring){ p.r = (1 - p.life / p.max) * CFG.flareKillR; }
+    else { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= Math.pow(0.18, dt); p.vy *= Math.pow(0.18, dt); }
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // ---- score popups ----
+  for (let i = popups.length - 1; i >= 0; i--){
+    const q = popups[i];
+    q.y += q.vy * dt; q.vy *= Math.pow(0.1, dt); q.life -= dt * 1.1;
+    if (q.life <= 0) popups.splice(i, 1);
+  }
+
+  // ---- spawning ----
+  spawnTimer -= dt;
+  if (spawnTimer <= 0){
+    const d = difficulty();
+    spawnShade();
+    // occasionally double-spawn deeper in
+    if (time > 35 && Math.random() < 0.3) spawnShade();
+    spawnTimer = d.spawnInterval * rand(0.8, 1.2);
+  }
+
+  // ---- decay feedback ----
+  shake *= Math.pow(0.0025, dt);
+  flash *= Math.pow(0.01, dt);
+  lowPulse += dt * (lumens < 22 ? 9 : 0);
+
+  // ---- lose condition ----
+  if (lumens <= 0){ lumens = 0; endGame(); }
+}
+
+/* ===================================================================== */
+/* ===== RENDER ========================================================= */
+/* ===================================================================== */
+function render(){
+  ctx.clearRect(0, 0, W, H);
+
+  // shake offset
+  const sx = (Math.random() - 0.5) * shake, sy = (Math.random() - 0.5) * shake;
+  ctx.save();
+  ctx.translate(sx, sy);
+
+  const lr = lightRadius();
+  const flick = lr * (1 + Math.sin(lightFlicker * 11) * 0.012 + Math.sin(lightFlicker*23)*0.006);
+
+  // faint world grid (only really visible inside the light, dimmed later)
+  ctx.strokeStyle = 'rgba(120,130,170,0.05)';
+  ctx.lineWidth = 1;
+  const gs = 56;
+  ctx.beginPath();
+  for (let x = (player.x % gs) - gs; x < W + gs; x += gs){ ctx.moveTo(x, -gs); ctx.lineTo(x, H + gs); }
+  for (let y = (player.y % gs) - gs; y < H + gs; y += gs){ ctx.moveTo(-gs, y); ctx.lineTo(W + gs, y); }
+  ctx.stroke();
+
+  // motes (drawn under darkness so distant ones stay dim, but glow brightly when near)
+  for (const m of motes){
+    const a = clamp(m.life / 1.2, 0, 1);
+    ctx.globalAlpha = a;
+    const g = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, 16);
+    g.addColorStop(0, '#d8feff'); g.addColorStop(0.4, '#5cf0ff'); g.addColorStop(1, 'rgba(92,240,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(m.x, m.y, 16, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = '#eaffff';
+    ctx.beginPath(); ctx.arc(m.x, m.y, 3, 0, 6.2832); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // shades — dark wisps with glowing eyes; brighten as they near the light
+  for (const s of shades){
+    const dl = Math.hypot(s.x - player.x, s.y - player.y);
+    const near = clamp(1 - dl / (lr * 1.15), 0, 1);     // 0 far, 1 inside light
+    const body = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.r * 1.5);
+    body.addColorStop(0, `rgba(40,28,70,${0.55 + near*0.4})`);
+    body.addColorStop(1, 'rgba(20,14,38,0)');
+    ctx.fillStyle = body;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r * 1.5, 0, 6.2832); ctx.fill();
+    // jagged core
+    ctx.fillStyle = `rgba(${30 + near*40},${20 + near*20},${60 + near*30},${0.5 + near*0.45})`;
+    ctx.beginPath();
+    const spikes = 7;
+    for (let k = 0; k <= spikes; k++){
+      const ang = (k / spikes) * 6.2832;
+      const rr = s.r * (0.7 + 0.32 * Math.sin(ang * 3 + s.wob + s.seed));
+      const px = s.x + Math.cos(ang) * rr, py = s.y + Math.sin(ang) * rr;
+      k === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+    // eyes — always faintly visible so you can spot them looming
+    const eyeA = 0.4 + near * 0.6 + s.glow * 0.4;
+    ctx.fillStyle = `rgba(255,${90 - near*30},${110 - near*40},${eyeA})`;
+    const ed = s.r * 0.4;
+    const ang = Math.atan2(player.y - s.y, player.x - s.x);
+    const ox = Math.cos(ang + 1.2) * ed, oy = Math.sin(ang + 1.2) * ed;
+    const ox2 = Math.cos(ang - 1.2) * ed, oy2 = Math.sin(ang - 1.2) * ed;
+    ctx.beginPath(); ctx.arc(s.x + ox, s.y + oy, 2.4, 0, 6.2832);
+    ctx.arc(s.x + ox2, s.y + oy2, 2.4, 0, 6.2832); ctx.fill();
+    // hit flash
+    if (s.glow > 0.02){
+      ctx.globalAlpha = s.glow * 0.6;
+      ctx.fillStyle = '#fff2c0';
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r * 1.2, 0, 6.2832); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // bolts — bright light arrows
+  for (const b of bolts){
+    ctx.strokeStyle = 'rgba(255,240,190,0.9)';
+    ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(b.x - b.vx * 0.018, b.y - b.vy * 0.018);
+    ctx.stroke();
+    ctx.fillStyle = '#fffbe6';
+    ctx.beginPath(); ctx.arc(b.x, b.y, CFG.boltR, 0, 6.2832); ctx.fill();
+  }
+
+  // particles (under player glow)
+  for (const p of particles){
+    if (p.ring){
+      ctx.globalAlpha = clamp(p.life / p.max, 0, 1) * 0.6;
+      ctx.strokeStyle = p.color; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.2832); ctx.stroke();
+    } else {
+      ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.2832); ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // player — the lantern. blink during i-frames.
+  const blink = invulnTimer > 0 && Math.floor(invulnTimer * 20) % 2 === 0;
+  if (!blink){
+    const core = ctx.createRadialGradient(player.x, player.y, 0, player.x, player.y, player.r * 1.6);
+    core.addColorStop(0, '#fffbe6'); core.addColorStop(0.5, '#ffe08a'); core.addColorStop(1, 'rgba(255,194,77,0)');
+    ctx.fillStyle = core;
+    ctx.beginPath(); ctx.arc(player.x, player.y, player.r * 1.6, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = '#fffdf0';
+    ctx.beginPath(); ctx.arc(player.x, player.y, player.r * 0.55, 0, 6.2832); ctx.fill();
+  }
+
+  ctx.restore(); // end shake
+
+  /* ---- DARKNESS OVERLAY: dim everything outside the light ---- */
+  const psx = player.x + sx, psy = player.y + sy;
+  const dg = ctx.createRadialGradient(psx, psy, flick * 0.45, psx, psy, flick);
+  dg.addColorStop(0, 'rgba(5,6,10,0)');
+  dg.addColorStop(0.7, 'rgba(5,6,10,0.55)');
+  dg.addColorStop(1, 'rgba(5,6,10,0.96)');
+  ctx.fillStyle = dg;
+  ctx.fillRect(0, 0, W, H);
+
+  /* ---- warm light bloom (additive) ---- */
+  ctx.globalCompositeOperation = 'lighter';
+  const bloom = ctx.createRadialGradient(psx, psy, 0, psx, psy, flick * 0.9);
+  bloom.addColorStop(0, 'rgba(255,224,138,0.16)');
+  bloom.addColorStop(0.5, 'rgba(255,194,77,0.07)');
+  bloom.addColorStop(1, 'rgba(255,194,77,0)');
+  ctx.fillStyle = bloom;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = 'source-over';
+
+  /* ---- hit flash ---- */
+  if (flash > 0.02){
+    ctx.fillStyle = `rgba(255,80,95,${flash * 0.28})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+  /* ---- low-light danger pulse at the edges ---- */
+  if (lumens < 22){
+    const p = (Math.sin(lowPulse) * 0.5 + 0.5) * (1 - lumens / 22);
+    const vg = ctx.createRadialGradient(W/2, H/2, Math.min(W,H)*0.3, W/2, H/2, Math.max(W,H)*0.7);
+    vg.addColorStop(0, 'rgba(255,40,60,0)');
+    vg.addColorStop(1, `rgba(255,40,60,${0.35 * p})`);
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  }
+
+  drawHUD();
+}
+
+/* ===================================================================== */
+/* ===== HUD ============================================================ */
+/* ===================================================================== */
+function drawHUD(){
+  if (state === GameState.MENU) return;
+
+  // ----- LUMENS bar (top-left) — the meter that matters -----
+  const bx = 20, by = 20, bw = Math.min(280, W * 0.4), bh = 16;
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  roundRect(bx, by, bw, bh, 8); ctx.fill();
+  const frac = clamp(lumens / CFG.lumMax, 0, 1);
+  const grad = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+  if (lumens < 22){ grad.addColorStop(0, '#ff4d5e'); grad.addColorStop(1, '#ff8a4d'); }
+  else { grad.addColorStop(0, '#ffc24d'); grad.addColorStop(1, '#fff2b0'); }
+  ctx.fillStyle = grad;
+  roundRect(bx, by, Math.max(2, bw * frac), bh, 8); ctx.fill();
+  ctx.font = '700 12px ui-monospace,monospace';
+  ctx.fillStyle = '#241a05'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('LIGHT', bx + 8, by + bh/2 + 1);
+  ctx.fillStyle = 'rgba(255,244,214,0.7)'; ctx.textAlign = 'right';
+  ctx.fillText(Math.ceil(lumens), bx + bw - 8, by + bh/2 + 1);
+
+  // ----- FLARE readiness pip under the bar -----
+  ctx.textAlign = 'left'; ctx.font = '700 11px ui-monospace,monospace';
+  if (flareTimer > 0){
+    ctx.fillStyle = 'rgba(255,244,214,0.35)';
+    ctx.fillText('FLARE … ' + flareTimer.toFixed(1) + 's', bx, by + bh + 16);
+  } else if (lumens >= CFG.flareCost){
+    ctx.fillStyle = '#ffe08a';
+    ctx.fillText('FLARE READY  [space]', bx, by + bh + 16);
+  } else {
+    ctx.fillStyle = 'rgba(255,77,94,0.7)';
+    ctx.fillText('FLARE — need ' + CFG.flareCost + ' light', bx, by + bh + 16);
+  }
+
+  // ----- score + time (top-right) -----
+  ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+  ctx.font = '700 26px ui-monospace,monospace'; ctx.fillStyle = '#fff4d6';
+  ctx.fillText(Math.floor(score).toString(), W - 20, 18);
+  ctx.font = '600 12px ui-monospace,monospace'; ctx.fillStyle = 'rgba(255,244,214,0.55)';
+  ctx.fillText(time.toFixed(1) + 's  ·  best ' + Math.floor(best), W - 20, 50);
+
+  // ----- floating score popups (drawn in HUD layer so they're always readable) -----
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const q of popups){
+    ctx.globalAlpha = clamp(q.life, 0, 1);
+    ctx.font = '700 16px ui-monospace,monospace';
+    ctx.fillStyle = q.color;
+    ctx.fillText(q.text, q.x, q.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+}
+function roundRect(x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/* ===================================================================== */
+/* ===== STATE TRANSITIONS ============================================= */
+/* ===================================================================== */
+const elMenu = document.getElementById('menu');
+const elPause = document.getElementById('pause');
+const elOver = document.getElementById('gameover');
+
+function show(el){ el.classList.remove('hidden'); }
+function hide(el){ el.classList.add('hidden'); }
+
+function startGame(){
+  Sound.unlock(); Sound.click();
+  resetGame();
+  state = GameState.PLAYING;
+  hide(elMenu); hide(elPause); hide(elOver);
+}
+function togglePause(){
+  if (state === GameState.PLAYING){ state = GameState.PAUSED; show(elPause); firing = false; Sound.click(); }
+  else if (state === GameState.PAUSED){ resumeGame(); }
+}
+function resumeGame(){ if (state === GameState.PAUSED){ state = GameState.PLAYING; hide(elPause); Sound.click(); } }
+function restartGame(){ Sound.click(); resetGame(); state = GameState.PLAYING; hide(elPause); hide(elOver); }
+function returnToMenu(){ Sound.click(); state = GameState.MENU; firing = false; touchTarget = null; hide(elPause); hide(elOver); show(elMenu); }
+function endGame(){
+  state = GameState.GAME_OVER;
+  firing = false; touchTarget = null;
+  best = Math.max(best, Math.floor(score));
+  document.getElementById('goScore').textContent = Math.floor(score);
+  document.getElementById('goTime').textContent = time.toFixed(1) + 's';
+  document.getElementById('goBest').textContent = Math.floor(best);
+  spawnBurst(player.x, player.y, '#ff6b7a', 30, 4, 1);
+  show(elOver); Sound.lose();
+}
+function toggleMute(){
+  Sound.toggleMute();
+  document.getElementById('muteBtn').textContent = Sound.muted ? '♪ SOUND OFF' : '♪ SOUND ON';
+}
+
+/* ===================================================================== */
+/* ===== UI WIRING ====================================================== */
+/* ===================================================================== */
+document.getElementById('playBtn').addEventListener('click', startGame);
+document.getElementById('resumeBtn').addEventListener('click', resumeGame);
+document.getElementById('restartBtn').addEventListener('click', restartGame);
+document.getElementById('quitBtn').addEventListener('click', returnToMenu);
+document.getElementById('againBtn').addEventListener('click', restartGame);
+document.getElementById('menuBtn').addEventListener('click', returnToMenu);
+document.getElementById('muteBtn').addEventListener('click', toggleMute);
+// click any menu button => unlock audio
+document.querySelectorAll('button').forEach(b => b.addEventListener('click', () => Sound.unlock()));
+
+/* ===================================================================== */
+/* ===== RESIZE / DPI =================================================== */
+/* ===================================================================== */
+function resize(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (!player){ resetGame(); }
+  else { player.x = clamp(player.x, player.r, W - player.r); player.y = clamp(player.y, player.r, H - player.r); }
+}
+addEventListener('resize', resize);
+
+/* ===================================================================== */
+/* ===== GAME LOOP ====================================================== */
+/* ===================================================================== */
+let last = performance.now();
+function frame(now){
+  const dt = Math.min((now - last) / 1000, 0.05);   // clamp big gaps after tab-out
+  last = now;
+  if (state === GameState.PLAYING) update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+
+/* ===================================================================== */
+/* ===== BOOT =========================================================== */
+/* ===================================================================== */
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
