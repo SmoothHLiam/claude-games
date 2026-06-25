@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>FLIPSIDE</title>
+<!--
+  ============================================================================
+  FLIPSIDE  —  a single-file HTML5 Canvas gravity-flip auto-runner
+  ----------------------------------------------------------------------------
+  GENRE   : One-button gravity-flip endless runner.
+  TWIST   : GRAZE COMBO. Tap to flip gravity and snap between the floor and the
+            ceiling to dodge spikes. The signature hook is the GRAZE: the LATER
+            you flip before a hazard sweeps past you, the bigger the score and
+            the higher your combo multiplier climbs. Playing it safe barely
+            scores; hugging death pays. The multiplier decays if you stop
+            taking risks, so the whole game is a nerve game of last-second flips.
+  CONTROLS: Flip gravity = SPACE / Click / Tap   (the only gameplay input)
+            Pause = Esc or P        Mute = M       Start/Restart = Enter
+  GOAL    : Survive as far as you can. Score = distance + grazes + orbs, all
+            scaled by your live combo multiplier. Endless, escalating speed,
+            lose on contact with a spike. Chase the best run.
+
+  DEFAULTS taken (per GAME_AGENT.md): 2D, procedural art, synthesized Web Audio
+  SFX, endless score loop with a lose state. No external assets, no CDN, no
+  build step — open index.html in any modern browser.
+  ============================================================================
+-->
+<style>
+  :root {
+    --bg:    #06080f;
+    --ink:   #eaf6ff;
+    --accent:#37e0ff;
+    --warn:  #ff4d6d;
+    --gold:  #ffd34d;
+    --dim:   #7d8aa6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+  #wrap { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  /* ---------- Overlays ---------- */
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+    background: radial-gradient(ellipse at center, rgba(8,12,24,0.72), rgba(4,5,12,0.92));
+    z-index: 10;
+    padding: 24px;
+    opacity: 1;
+    transition: opacity 0.28s ease;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+
+  .title {
+    font-size: clamp(44px, 12vw, 120px);
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    line-height: 0.95;
+    background: linear-gradient(180deg, #9af0ff, var(--accent) 55%, #1597c9);
+    -webkit-background-clip: text; background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 32px rgba(55,224,255,0.35);
+    transform: translateY(8px);
+    animation: floaty 4s ease-in-out infinite;
+  }
+  @keyframes floaty { 0%,100%{ transform: translateY(8px);} 50%{ transform: translateY(-2px);} }
+
+  .tagline { margin-top: 10px; color: var(--accent); font-size: clamp(13px,2.6vw,18px); letter-spacing: 0.04em; }
+  .sub     { margin-top: 6px; color: var(--dim); font-size: clamp(11px,2.2vw,14px); max-width: 560px; line-height: 1.5; }
+
+  .btn {
+    margin-top: 22px;
+    font: inherit; font-size: clamp(16px,3.2vw,22px); font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #04121a;
+    background: linear-gradient(180deg, #8fefff, var(--accent));
+    border: none; border-radius: 14px;
+    padding: 14px 34px;
+    cursor: pointer;
+    box-shadow: 0 6px 0 #1782aa, 0 12px 30px rgba(55,224,255,0.35);
+    transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.15s ease;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn:active { transform: translateY(4px); box-shadow: 0 2px 0 #1782aa, 0 6px 16px rgba(55,224,255,0.3); }
+  .btn.ghost {
+    color: var(--ink);
+    background: rgba(255,255,255,0.06);
+    box-shadow: inset 0 0 0 1.5px rgba(255,255,255,0.18);
+    padding: 11px 26px; font-size: clamp(13px,2.6vw,17px);
+  }
+  .btn.ghost:active { transform: translateY(2px); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 16px; }
+
+  .controls {
+    margin-top: 22px; color: var(--dim); font-size: clamp(11px,2.3vw,14px);
+    line-height: 1.8; max-width: 520px;
+  }
+  .controls b { color: var(--ink); }
+  kbd {
+    display: inline-block; background: #141a2c; color: var(--ink);
+    border: 1px solid #2a3450; border-bottom-width: 3px; border-radius: 6px;
+    padding: 1px 8px; font: inherit; font-size: 0.9em; margin: 0 2px;
+  }
+
+  .ovStat { margin-top: 14px; font-size: clamp(15px,3vw,20px); }
+  .ovStat .big { color: var(--gold); font-weight: 800; font-size: 1.5em; }
+  .ovBest { margin-top: 4px; color: var(--dim); font-size: clamp(12px,2.4vw,15px); }
+  .deathReason { margin-top: 4px; color: var(--warn); font-size: clamp(12px,2.4vw,15px); }
+  .grazeBest { color: var(--accent); }
+
+  /* ---------- HUD ---------- */
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 14px 18px; z-index: 5; pointer-events: none;
+    font-weight: 700; letter-spacing: 0.03em;
+  }
+  #hud .col.r { text-align: right; }
+  #score { font-size: clamp(22px,5vw,40px); text-shadow: 0 2px 10px rgba(0,0,0,0.6); }
+  #dist  { color: var(--dim); font-size: clamp(11px,2.4vw,14px); margin-top: 2px; }
+  #multi { font-size: clamp(20px,4.6vw,34px); color: var(--gold); text-shadow: 0 0 14px rgba(255,211,77,0.5); }
+  #best  { color: var(--dim); font-size: clamp(11px,2.4vw,14px); margin-top: 2px; }
+  #hud.dim { opacity: 0; transition: opacity 0.2s; }
+
+  #muteTag {
+    position: absolute; bottom: 10px; right: 14px; z-index: 6;
+    color: var(--dim); font-size: 12px; pointer-events: none; letter-spacing: 0.05em;
+  }
+  .pillRow { display:flex; gap:18px; justify-content:center; margin-top: 18px; color: var(--dim); font-size: clamp(11px,2.3vw,14px); flex-wrap: wrap;}
+  .pillRow b { color: var(--gold); }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game"></canvas>
+
+  <!-- HUD -->
+  <div id="hud" class="dim">
+    <div class="col">
+      <div id="score">0</div>
+      <div id="dist">0 m</div>
+    </div>
+    <div class="col r">
+      <div id="multi">x1.0</div>
+      <div id="best">BEST 0</div>
+    </div>
+  </div>
+
+  <!-- Main menu -->
+  <div id="menu" class="overlay">
+    <div class="title">FLIPSIDE</div>
+    <div class="tagline">Flip gravity. Graze death. Chase the multiplier.</div>
+    <div class="sub">A one-button gravity runner. The <b style="color:var(--gold)">later</b> you flip before a spike sweeps past, the bigger the <b style="color:var(--accent)">GRAZE</b> — and the higher your combo climbs. Safe play barely scores.</div>
+    <button class="btn" id="playBtn">▶ PLAY</button>
+    <div class="controls">
+      <div><b>Flip gravity</b> — <kbd>Space</kbd> / <kbd>Click</kbd> / <kbd>Tap</kbd></div>
+      <div><b>Pause</b> <kbd>Esc</kbd>/<kbd>P</kbd> &nbsp;·&nbsp; <b>Mute</b> <kbd>M</kbd> &nbsp;·&nbsp; <b>Start</b> <kbd>Enter</kbd></div>
+    </div>
+    <div class="pillRow">
+      <div>GRAZE a spike = <b>BONUS + combo↑</b></div>
+      <div>collect <b style="color:var(--gold)">orbs</b></div>
+      <div>don't touch the <b style="color:var(--warn)">spikes</b></div>
+    </div>
+  </div>
+
+  <!-- Pause menu -->
+  <div id="pause" class="overlay hidden">
+    <div class="title" style="font-size:clamp(34px,9vw,72px)">PAUSED</div>
+    <div class="row">
+      <button class="btn" id="resumeBtn">RESUME</button>
+    </div>
+    <div class="row">
+      <button class="btn ghost" id="restartBtn">RESTART</button>
+      <button class="btn ghost" id="quitBtn">QUIT TO MENU</button>
+      <button class="btn ghost" id="muteBtn2">MUTE: ON</button>
+    </div>
+    <div class="controls"><div>Press <kbd>Esc</kbd> / <kbd>P</kbd> to resume</div></div>
+  </div>
+
+  <!-- Game over -->
+  <div id="over" class="overlay hidden">
+    <div class="title" style="font-size:clamp(34px,9vw,72px); background:linear-gradient(180deg,#ff97a8,var(--warn) 60%,#b01f37); -webkit-background-clip:text; background-clip:text;">WIPEOUT</div>
+    <div class="deathReason" id="deathReason">You hit a spike.</div>
+    <div class="ovStat">SCORE <span class="big" id="finalScore">0</span></div>
+    <div class="ovBest" id="finalLine">0 m travelled · best graze x0</div>
+    <div class="ovBest" id="bestLine">BEST 0</div>
+    <div class="row">
+      <button class="btn" id="againBtn">▶ PLAY AGAIN</button>
+      <button class="btn ghost" id="menuBtn">MAIN MENU</button>
+    </div>
+  </div>
+
+  <div id="muteTag">M: sound on</div>
+</div>
+
+<script>
+/* ============================================================================
+   FLIPSIDE — organized: CONFIG · STATE · AUDIO · INPUT · WORLD · UPDATE ·
+   RENDER · UI/MENUS · GAME LOOP · BOOT
+   ========================================================================== */
+
+// ===== CONFIG =====
+const CFG = {
+  playerX:        0.26,   // fraction of width where the runner sits
+  playerR:        16,     // runner radius (px)
+  gravity:        2600,   // px/s^2 pull toward current surface
+  maxFall:        1700,   // terminal velocity (px/s)
+  marginTop:      90,     // gap above ceiling surface (HUD room)
+  marginBottom:   54,     // gap below floor surface
+  startSpeed:     360,    // world scroll px/s at run start
+  maxSpeed:       960,    // speed cap
+  speedRamp:      9,      // px/s gained per second alive
+  spikeH:         52,     // spike triangle height
+  spikeW:         46,     // spike base width
+  orbR:           12,
+  grazeWindow:    0.34,   // s — flip OFF a spike's surface within this of its pass = GRAZE
+  comboDecay:     0.55,   // multiplier lost per second of no risk
+  comboMax:       9.9,
+  distPerMeter:   42,     // px scrolled == 1 "meter"
+};
+
+// ===== STATE =====
+const GameState = { MENU:'MENU', PLAYING:'PLAYING', PAUSED:'PAUSED', GAME_OVER:'GAME_OVER' };
+let state = GameState.MENU;   // always boot into the menu
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0;             // logical (CSS px) size
+
+// run-scoped state — all reset in startGame()
+let player, obstacles, orbs, particles, popups, stars;
+let scrollX, speed, runTime, distMeters, score;
+let combo, comboTimer, bestGrazeStreak, grazeStreak;
+let shake, hitstop, spawnAccum, nextGap, flash, surfaceFlashFloor, surfaceFlashCeil;
+let best = 0, bestGrazeEver = 0;   // session bests (kept in memory, not localStorage)
+let deathCause = '';
+
+// derived surface Y positions (player CENTER snaps to these)
+function floorY() { return H - CFG.marginBottom - CFG.playerR; }
+function ceilY()  { return CFG.marginTop + CFG.playerR; }
+function surfaceLineFloor() { return H - CFG.marginBottom; }
+function surfaceLineCeil()  { return CFG.marginTop; }
+function px() { return Math.round(W * CFG.playerX); }
+
+// ===== AUDIO =====  (synthesized Web Audio — zero asset files)
+const Sound = (() => {
+  let ctxA, muted = false;
+  const ensure = () => { if (!ctxA) ctxA = new (window.AudioContext || window.webkitAudioContext)(); };
+  const unlock = () => { ensure(); if (ctxA.state === 'suspended') ctxA.resume(); };
+
+  function tone({ freq=440, dur=0.12, type='square', vol=0.2, slide=0, delay=0 }) {
+    if (muted) return;
+    ensure();
+    const t0 = ctxA.currentTime + delay;
+    const osc = ctxA.createOscillator();
+    const gain = ctxA.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freq + slide), t0 + dur);
+    gain.gain.setValueAtTime(vol, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(gain).connect(ctxA.destination);
+    osc.start(t0); osc.stop(t0 + dur);
+  }
+  const flip    = () => tone({ freq: 260, dur: 0.14, type:'sine',     vol:0.22, slide: 360 });
+  const collect = () => tone({ freq: 880, dur: 0.12, type:'triangle', vol:0.20, slide: 420 });
+  const graze   = (n=0) => tone({ freq: 520 + Math.min(n,12)*70, dur: 0.07, type:'square', vol:0.16, slide: 120 });
+  const click   = () => tone({ freq: 440, dur: 0.05, type:'square',   vol:0.12 });
+  const milestone = () => { tone({freq:660,dur:0.1,type:'triangle',vol:0.18}); tone({freq:990,dur:0.18,type:'triangle',vol:0.18,delay:0.1}); };
+  const lose    = () => { tone({ freq: 200, dur: 0.5, type:'sawtooth', vol:0.26, slide:-150 }); tone({freq:90,dur:0.6,type:'sine',vol:0.22,slide:-30,delay:0.04}); };
+
+  return {
+    unlock, flip, collect, graze, click, milestone, lose,
+    toggleMute: () => (muted = !muted),
+    get muted() { return muted; },
+  };
+})();
+
+// ===== INPUT =====
+function doFlip() {
+  if (state !== GameState.PLAYING) return;
+  player.grav *= -1;
+  player.flipTime = runTime;          // timestamp for graze detection
+  player.spin = player.grav > 0 ? 0 : Math.PI;  // visual target
+  Sound.flip();
+  spawnBurst(player.x, player.y, '#37e0ff', 10, 2.4);
+  shake = Math.min(shake + 2.5, 9);
+}
+
+addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  switch (e.code) {
+    case 'Space':
+      e.preventDefault();
+      if (state === GameState.MENU)       startGame();
+      else if (state === GameState.GAME_OVER) startGame();
+      else                                 doFlip();
+      break;
+    case 'Enter':
+      if (state === GameState.MENU || state === GameState.GAME_OVER) startGame();
+      break;
+    case 'Escape':
+    case 'KeyP':
+      if (state === GameState.PLAYING) pauseGame();
+      else if (state === GameState.PAUSED) resumeGame();
+      break;
+    case 'KeyM':
+      toggleMute();
+      break;
+  }
+});
+
+// pointer / touch — tap anywhere flips (or starts)
+function pointerDown(e) {
+  // ignore taps that land on a UI button (those have their own handlers)
+  if (e.target && e.target.closest && e.target.closest('.btn')) return;
+  Sound.unlock();
+  if (state === GameState.PLAYING) { e.preventDefault(); doFlip(); }
+  else if (state === GameState.MENU || state === GameState.GAME_OVER) startGame();
+}
+canvas.addEventListener('pointerdown', pointerDown);
+
+// ===== WORLD / ENTITIES =====
+function resetRun() {
+  player = { x: px(), y: floorY(), vy: 0, grav: 1, flipTime: -10, spin: 0, spinTarget: 0, trail: [] };
+  obstacles = [];
+  orbs = [];
+  particles = [];
+  popups = [];
+  scrollX = 0; speed = CFG.startSpeed; runTime = 0; distMeters = 0; score = 0;
+  combo = 1; comboTimer = 0; grazeStreak = 0; bestGrazeStreak = 0;
+  shake = 0; hitstop = 0; flash = 0; spawnAccum = 0;
+  nextGap = 520;
+  surfaceFlashFloor = 0; surfaceFlashCeil = 0;
+  lastMilestone = 0;
+  makeStars();
+}
+let lastMilestone = 0;
+
+function makeStars() {
+  stars = [];
+  const n = Math.round((W * H) / 14000);
+  for (let i = 0; i < n; i++) {
+    stars.push({
+      x: Math.random() * W,
+      y: ceilY() + Math.random() * (floorY() - ceilY()),
+      z: 0.25 + Math.random() * 1.0,     // parallax depth
+      r: 0.5 + Math.random() * 1.6,
+    });
+  }
+}
+
+// spawn a fair hazard: spikes on ONE surface, forcing the player to be on the
+// opposite surface. Occasionally drop an orb on the safe lane / mid-air.
+function spawnPattern() {
+  const x = W + 60;
+  const onFloor = Math.random() < 0.5;
+  // cluster of 1-3 spikes, scaling slightly with speed
+  const t = (speed - CFG.startSpeed) / (CFG.maxSpeed - CFG.startSpeed);
+  const maxCount = 1 + Math.round(t * 2);
+  const count = 1 + Math.floor(Math.random() * maxCount);
+  let cx = x;
+  for (let i = 0; i < count; i++) {
+    obstacles.push({ x: cx, w: CFG.spikeW, floor: onFloor, passed: false, grazed: false });
+    cx += CFG.spikeW + 2;
+  }
+  const clusterW = cx - x;
+
+  // orb reward: on the SAFE surface just before/after, or floating mid-lane
+  if (Math.random() < 0.7) {
+    const r = Math.random();
+    let oy;
+    if (r < 0.45) oy = onFloor ? ceilY() : floorY();           // safe surface
+    else          oy = (ceilY() + floorY()) / 2 + (Math.random()-0.5) * (floorY()-ceilY()) * 0.5; // mid
+    orbs.push({ x: x + clusterW + 40 + Math.random()*60, y: oy, taken: false, bob: Math.random()*Math.PI*2 });
+  }
+
+  // gap to next pattern shrinks as speed climbs (but always clearable)
+  const reaction = 0.42 - t * 0.12;        // seconds of reaction time we guarantee
+  nextGap = clusterW + Math.max(speed * reaction, 230);
+}
+
+function spawnBurst(x, y, color, count = 12, spd = 3) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 0.6 + Math.random() * spd;
+    particles.push({ x, y, vx: Math.cos(a)*s*60, vy: Math.sin(a)*s*60, life: 1, max: 0.5+Math.random()*0.4, color, r: 1.5+Math.random()*2.5 });
+  }
+}
+function addPopup(x, y, text, color) {
+  popups.push({ x, y, text, color, life: 1 });
+}
+
+// ===== UPDATE =====
+function update(dt) {
+  // hitstop: a few ms of frozen time on strong impacts for crunch
+  if (hitstop > 0) { hitstop -= dt; particlesStep(dt); return; }
+
+  runTime += dt;
+
+  // speed ramp + difficulty
+  speed = Math.min(CFG.maxSpeed, CFG.startSpeed + runTime * CFG.speedRamp);
+  const move = speed * dt;
+  scrollX += move;
+  distMeters = scrollX / CFG.distPerMeter;
+
+  // passive scoring scaled by combo (distance is cheap; grazes are the money)
+  score += move * 0.018 * combo;
+
+  // milestone stinger every 250m
+  if (Math.floor(distMeters / 250) > lastMilestone) {
+    lastMilestone = Math.floor(distMeters / 250);
+    if (lastMilestone > 0) { Sound.milestone(); flash = Math.max(flash, 0.4); addPopup(px(), H*0.4, `${lastMilestone*250}m`, '#ffd34d'); }
+  }
+
+  // --- player physics: gravity toward current surface ---
+  player.vy += CFG.gravity * player.grav * dt;
+  player.vy = Math.max(-CFG.maxFall, Math.min(CFG.maxFall, player.vy));
+  player.y += player.vy * dt;
+
+  const fy = floorY(), cy = ceilY();
+  if (player.grav > 0 && player.y >= fy) { player.y = fy; player.vy = 0; }
+  if (player.grav < 0 && player.y <= cy) { player.y = cy; player.vy = 0; }
+  // safety clamp
+  player.y = Math.max(cy, Math.min(fy, player.y));
+  player.x = px();
+
+  // spin visual easing toward target
+  player.spinTarget = player.grav > 0 ? 0 : Math.PI;
+  player.spin += (player.spinTarget - player.spin) * Math.min(1, dt * 14);
+
+  // trail
+  player.trail.push({ x: player.x, y: player.y, life: 1 });
+  if (player.trail.length > 16) player.trail.shift();
+  for (const t of player.trail) t.life -= dt * 3.2;
+  player.trail = player.trail.filter(t => t.life > 0);
+
+  // --- spawn hazards ---
+  spawnAccum += move;
+  if (spawnAccum >= nextGap) { spawnAccum = 0; spawnPattern(); }
+
+  // --- combo decay when not taking risks ---
+  comboTimer += dt;
+  if (comboTimer > 1.1 && combo > 1) {
+    combo = Math.max(1, combo - CFG.comboDecay * dt);
+  }
+
+  // --- move + resolve obstacles ---
+  const pr = CFG.playerR;
+  for (const o of obstacles) {
+    o.x -= move;
+    const playerOnFloor = player.grav > 0 && player.y > (cy+fy)/2;
+    const playerOnCeil  = player.grav < 0 && player.y < (cy+fy)/2;
+    const onSameSurface = (o.floor && player.y > fy - pr - 4) || (!o.floor && player.y < cy + pr + 4);
+
+    // collision: player overlaps spike x-range AND is on that surface
+    const overlapX = (player.x + pr*0.6 > o.x) && (player.x - pr*0.6 < o.x + o.w);
+    if (overlapX && onSameSurface) { die('You kissed a spike.'); return; }
+
+    // pass / graze accounting (hazard fully swept behind the player)
+    if (!o.passed && o.x + o.w < player.x - pr*0.6) {
+      o.passed = true;
+      // GRAZE = a genuine last-second bail: did we flip OFF this spike's
+      // surface within the graze window? (grav<0 means we just left the floor)
+      const sinceFlip = runTime - player.flipTime;
+      const vacatedSurfaceIsFloor = player.grav < 0;
+      if (sinceFlip <= CFG.grazeWindow && o.floor === vacatedSurfaceIsFloor) {
+        grazeStreak++;
+        bestGrazeStreak = Math.max(bestGrazeStreak, grazeStreak);
+        combo = Math.min(CFG.comboMax, combo + 0.5 + grazeStreak * 0.06);
+        comboTimer = 0;
+        const pts = Math.round(40 * combo);
+        score += pts;
+        Sound.graze(grazeStreak);
+        addPopup(player.x + 26, player.y - 24, `GRAZE +${pts}`, '#37e0ff');
+        spawnBurst(o.floor ? o.x + o.w/2 : o.x + o.w/2, o.floor ? surfaceLineFloor() : surfaceLineCeil(), '#37e0ff', 8, 2.2);
+        shake = Math.min(shake + 3, 10);
+        if (o.floor) surfaceFlashFloor = 1; else surfaceFlashCeil = 1;
+      } else {
+        // a clean but cautious clear — tiny reward, gentle combo trickle
+        combo = Math.min(CFG.comboMax, combo + 0.06);
+        score += Math.round(6 * combo);
+        grazeStreak = 0;
+      }
+    }
+  }
+  obstacles = obstacles.filter(o => o.x + o.w > -40);
+
+  // --- orbs ---
+  for (const ob of orbs) {
+    ob.x -= move;
+    ob.bob += dt * 6;
+    if (!ob.taken) {
+      const dx = ob.x - player.x, dy = ob.y - player.y;
+      if (dx*dx + dy*dy < (pr + CFG.orbR) * (pr + CFG.orbR)) {
+        ob.taken = true;
+        comboTimer = 0;
+        combo = Math.min(CFG.comboMax, combo + 0.12);
+        const pts = Math.round(60 * combo);
+        score += pts;
+        Sound.collect();
+        addPopup(ob.x, ob.y - 22, `+${pts}`, '#ffd34d');
+        spawnBurst(ob.x, ob.y, '#ffd34d', 12, 3);
+      }
+    }
+  }
+  orbs = orbs.filter(o => !o.taken && o.x + CFG.orbR > -40);
+
+  // surface flashes decay
+  surfaceFlashFloor = Math.max(0, surfaceFlashFloor - dt * 3);
+  surfaceFlashCeil  = Math.max(0, surfaceFlashCeil  - dt * 3);
+  flash = Math.max(0, flash - dt * 1.6);
+
+  particlesStep(dt);
+
+  // popups rise & fade
+  for (const p of popups) { p.y -= dt * 46; p.life -= dt * 1.3; }
+  popups = popups.filter(p => p.life > 0);
+
+  // stars parallax
+  for (const s of stars) {
+    s.x -= move * s.z * 0.35;
+    if (s.x < -2) { s.x = W + 2; s.y = ceilY() + Math.random() * (floorY() - ceilY()); }
+  }
+
+  shake *= 0.86;
+}
+
+function particlesStep(dt) {
+  for (const p of particles) {
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vx *= 0.92; p.vy *= 0.92;
+    p.life -= dt / p.max;
+  }
+  particles = particles.filter(p => p.life > 0);
+}
+
+function die(reason) {
+  deathCause = reason;
+  Sound.lose();
+  shake = 16; hitstop = 0.12; flash = 1;
+  spawnBurst(player.x, player.y, '#ff4d6d', 30, 5);
+  spawnBurst(player.x, player.y, '#ffffff', 14, 3.5);
+  endGame();
+}
+
+// ===== RENDER =====
+function render() {
+  ctx.clearRect(0, 0, W, H);
+
+  // background gradient
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#0a0f1f');
+  bg.addColorStop(0.5, '#06080f');
+  bg.addColorStop(1, '#0a0f1f');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  const sx = (Math.random() - 0.5) * shake;
+  const sy = (Math.random() - 0.5) * shake;
+  ctx.translate(sx, sy);
+
+  // stars
+  for (const s of stars) {
+    ctx.globalAlpha = 0.25 + s.z * 0.5;
+    ctx.fillStyle = '#9fd9ff';
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  drawSurfaces();
+
+  if (state !== GameState.MENU) {
+    drawOrbs();
+    drawObstacles();
+    drawPlayer();
+    drawParticles();
+    drawPopups();
+  } else {
+    drawParticles();
+  }
+
+  ctx.restore();
+
+  // full-screen flash (death / milestone)
+  if (flash > 0.001) {
+    ctx.fillStyle = `rgba(255,255,255,${flash * 0.5})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+function drawSurfaces() {
+  const fLine = surfaceLineFloor(), cLine = surfaceLineCeil();
+  // floor
+  drawSurfaceBand(fLine, H, '#0e1830', surfaceFlashFloor, +1);
+  // ceiling
+  drawSurfaceBand(cLine, 0, '#0e1830', surfaceFlashCeil, -1);
+
+  // neon edge lines
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = `rgba(55,224,255,${0.5 + surfaceFlashFloor*0.5})`;
+  ctx.shadowColor = '#37e0ff'; ctx.shadowBlur = 14 + surfaceFlashFloor*20;
+  line(0, fLine, W, fLine);
+  ctx.strokeStyle = `rgba(55,224,255,${0.5 + surfaceFlashCeil*0.5})`;
+  ctx.shadowBlur = 14 + surfaceFlashCeil*20;
+  line(0, cLine, W, cLine);
+  ctx.shadowBlur = 0;
+
+  // moving lane ticks for a sense of speed
+  ctx.strokeStyle = 'rgba(55,224,255,0.12)';
+  ctx.lineWidth = 2;
+  const spacing = 60;
+  const off = (scrollX % spacing);
+  for (let x = -off; x < W; x += spacing) {
+    line(x, fLine, x, fLine + 10);
+    line(x, cLine, x, cLine - 10);
+  }
+}
+function drawSurfaceBand(edge, far, color, glow, dir) {
+  const g = ctx.createLinearGradient(0, edge, 0, far);
+  g.addColorStop(0, `rgba(20,32,62,${0.95})`);
+  g.addColorStop(1, 'rgba(6,8,15,0.2)');
+  ctx.fillStyle = g;
+  if (dir > 0) ctx.fillRect(0, edge, W, far - edge);
+  else         ctx.fillRect(0, far, W, edge - far);
+}
+
+function drawObstacles() {
+  for (const o of obstacles) {
+    const base = o.floor ? surfaceLineFloor() : surfaceLineCeil();
+    const tipY = o.floor ? base - CFG.spikeH : base + CFG.spikeH;
+    ctx.beginPath();
+    ctx.moveTo(o.x, base);
+    ctx.lineTo(o.x + o.w, base);
+    ctx.lineTo(o.x + o.w/2, tipY);
+    ctx.closePath();
+    const grd = ctx.createLinearGradient(0, base, 0, tipY);
+    grd.addColorStop(0, '#ff4d6d');
+    grd.addColorStop(1, '#a8324b');
+    ctx.fillStyle = grd;
+    ctx.shadowColor = '#ff4d6d'; ctx.shadowBlur = 12;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // highlight edge
+    ctx.strokeStyle = 'rgba(255,200,210,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+}
+
+function drawOrbs() {
+  for (const ob of orbs) {
+    const yy = ob.y + Math.sin(ob.bob) * 4;
+    const pr = CFG.orbR + Math.sin(ob.bob*1.4) * 1.5;
+    ctx.beginPath(); ctx.arc(ob.x, yy, pr, 0, Math.PI*2);
+    ctx.fillStyle = '#ffd34d';
+    ctx.shadowColor = '#ffd34d'; ctx.shadowBlur = 16; ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.beginPath(); ctx.arc(ob.x - pr*0.3, yy - pr*0.3, pr*0.35, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
+  }
+}
+
+function drawPlayer() {
+  // trail
+  for (const t of player.trail) {
+    ctx.globalAlpha = t.life * 0.4;
+    ctx.beginPath(); ctx.arc(t.x, t.y, CFG.playerR * (0.4 + t.life*0.5), 0, Math.PI*2);
+    ctx.fillStyle = '#37e0ff'; ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  // body: a rounded glowing craft, flips orientation with gravity
+  ctx.rotate(player.spin);
+  ctx.shadowColor = '#37e0ff'; ctx.shadowBlur = 22;
+  const r = CFG.playerR;
+  // teardrop pointing toward current "down"
+  ctx.beginPath();
+  ctx.moveTo(0, r * 1.25);
+  ctx.quadraticCurveTo(r, r*0.2, r*0.7, -r*0.7);
+  ctx.quadraticCurveTo(0, -r*1.1, -r*0.7, -r*0.7);
+  ctx.quadraticCurveTo(-r, r*0.2, 0, r*1.25);
+  ctx.closePath();
+  const pg = ctx.createLinearGradient(0, -r, 0, r);
+  pg.addColorStop(0, '#bff4ff');
+  pg.addColorStop(1, '#1aa9d6');
+  ctx.fillStyle = pg; ctx.fill();
+  ctx.shadowBlur = 0;
+  // eye / core
+  ctx.beginPath(); ctx.arc(0, -r*0.15, r*0.32, 0, Math.PI*2);
+  ctx.fillStyle = '#04121a'; ctx.fill();
+  ctx.beginPath(); ctx.arc(r*0.08, -r*0.25, r*0.12, 0, Math.PI*2);
+  ctx.fillStyle = '#bff4ff'; ctx.fill();
+  ctx.restore();
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawPopups() {
+  ctx.textAlign = 'center';
+  for (const p of popups) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life*1.4));
+    ctx.font = '700 20px ui-monospace, monospace';
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color; ctx.shadowBlur = 8;
+    ctx.fillText(p.text, p.x, p.y);
+    ctx.shadowBlur = 0;
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'start';
+}
+
+function line(x1,y1,x2,y2){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
+
+// ===== UI / MENUS =====
+const el = (id) => document.getElementById(id);
+const menuEl = el('menu'), pauseEl = el('pause'), overEl = el('over'), hudEl = el('hud');
+
+function show(elm){ elm.classList.remove('hidden'); }
+function hide(elm){ elm.classList.add('hidden'); }
+
+function refreshHUD() {
+  el('score').textContent = Math.floor(score).toLocaleString();
+  el('dist').textContent = `${Math.floor(distMeters)} m`;
+  el('multi').textContent = 'x' + combo.toFixed(1);
+  el('best').textContent = 'BEST ' + Math.floor(best).toLocaleString();
+  // tint multiplier hotter as it climbs
+  const t = Math.min(1, (combo - 1) / (CFG.comboMax - 1));
+  el('multi').style.color = `rgb(255, ${Math.round(211 - t*120)}, ${Math.round(77 - t*40)})`;
+}
+
+function startGame() {
+  Sound.unlock(); Sound.click();
+  resetRun();
+  state = GameState.PLAYING;
+  hide(menuEl); hide(overEl); hide(pauseEl);
+  hudEl.classList.remove('dim');
+  refreshHUD();
+}
+function pauseGame() {
+  if (state !== GameState.PLAYING) return;
+  Sound.click();
+  state = GameState.PAUSED;
+  show(pauseEl);
+  hudEl.classList.add('dim');
+}
+function resumeGame() {
+  if (state !== GameState.PAUSED) return;
+  Sound.click();
+  state = GameState.PLAYING;
+  hide(pauseEl);
+  hudEl.classList.remove('dim');
+  last = performance.now();   // avoid a dt spike after the pause
+}
+function returnToMenu() {
+  Sound.click();
+  state = GameState.MENU;
+  hide(pauseEl); hide(overEl); show(menuEl);
+  hudEl.classList.add('dim');
+}
+function endGame() {
+  state = GameState.GAME_OVER;
+  best = Math.max(best, score);
+  bestGrazeEver = Math.max(bestGrazeEver, bestGrazeStreak);
+  el('deathReason').textContent = deathCause;
+  el('finalScore').textContent = Math.floor(score).toLocaleString();
+  el('finalLine').innerHTML = `${Math.floor(distMeters)} m travelled · best graze streak <span class="grazeBest">x${bestGrazeStreak}</span>`;
+  el('bestLine').textContent = `BEST ${Math.floor(best).toLocaleString()}  ·  best graze ever x${bestGrazeEver}`;
+  hudEl.classList.add('dim');
+  // small delay so the death burst is visible before the overlay fades in
+  setTimeout(() => { if (state === GameState.GAME_OVER) show(overEl); }, 480);
+}
+
+function toggleMute() {
+  Sound.toggleMute();
+  const onTxt = Sound.muted ? 'OFF' : 'ON';
+  el('muteBtn2').textContent = 'MUTE: ' + (Sound.muted ? 'OFF' : 'ON');
+  el('muteTag').textContent = 'M: sound ' + (Sound.muted ? 'off' : 'on');
+}
+
+// button wiring
+el('playBtn').addEventListener('click', startGame);
+el('resumeBtn').addEventListener('click', resumeGame);
+el('restartBtn').addEventListener('click', startGame);
+el('quitBtn').addEventListener('click', returnToMenu);
+el('againBtn').addEventListener('click', startGame);
+el('menuBtn').addEventListener('click', returnToMenu);
+el('muteBtn2').addEventListener('click', toggleMute);
+
+// ===== GAME LOOP =====
+let last = performance.now();
+function frame(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  dt = Math.min(dt, 0.05);            // clamp after tab-out
+
+  if (state === GameState.PLAYING) {
+    update(dt);
+    refreshHUD();
+  }
+  render();
+  requestAnimationFrame(frame);
+}
+
+// ===== BOOT =====
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width  = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (player) player.x = px();
+  if (!stars) makeStars();
+}
+addEventListener('resize', resize);
+
+// initialize empty collections so the MENU can render before the first run
+obstacles = []; orbs = []; particles = []; popups = [];
+
+resize();
+makeStars();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
