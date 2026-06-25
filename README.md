@@ -21,6 +21,7 @@ or jump straight into any game's folder.
 | [**TEMPO**](tempo/index.html) | Time-bending arena shooter | **Time moves only when you do** — enemies, their bullets, and spawns all run at the speed *you* move. Stand still and the world nearly freezes; your own shots always fly at full speed. Freeze time, aim, fire, then dance through the gaps. Clear 12 waves to win. |
 | [**ENCORE**](encore/index.html) | Echo / replay arena shooter | **Every life replays beside you** — the instant you die, your whole run is recorded and returns from the next take on as an intangible *echo* that moves and fires exactly as you did. Enemies only chase the live you, so your echoes pour uninterrupted fire into the CORE. Stack enough past selves to burst it in one take before your 7 takes run out. |
 | [**EMBER**](ember/index.html) | Brick-breaker (Breakout) | **Keep the ball hot** — breaking bricks and rallying off the paddle add heat; heat decays over time. A *cold* ball just clinks off bricks without breaking them; a *molten* ball pierces straight through whole rows. Chain bricks and rally to stay lethal. Clear all 5 levels. |
+| [**LUMEN**](lumen/index.html) | Top-down survival in the dark | **Light is life** — a single meter is your sight, your ammo, *and* your health. It drains every second and every bolt you fire spends it; killing shades drops *motes* that refuel you. Keep feeding the light that keeps the dark out, or it goes out for good. |
 
 Each game is a single self-contained `index.html` — **open it directly in any
 modern browser** (double-click, or drag it into a tab). No server needed.
@@ -38,6 +39,7 @@ aegis/            # AEGIS      — bullet-parry / shield-reflect arena
 tempo/            # TEMPO      — time-moves-when-you-move arena shooter
 encore/           # ENCORE     — echo / replay "fight beside your past lives" arena
 ember/            # EMBER      — molten breakout / brick-breaker with a heat twist
+lumen/            # LUMEN      — light-is-life survival in the dark
 ```
 
 ## Notes
