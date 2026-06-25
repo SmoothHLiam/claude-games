@@ -506,4 +506,36 @@ The goal: the user should be able to pull your branch and have the game just wor
 
 ---
 
+## 20. Multi-Game Repo Rule (CRITICAL — read this before touching the filesystem)
+
+This repository accumulates games over many separate runs (e.g. an hourly routine), often with several runs' worth of unmerged PRs sitting open at once before a human reviews and merges them in a batch. Because of this, file placement is not a style preference — getting it wrong causes silent overwrites and merge conflicts between unrelated games. Follow this exactly, every single run, no exceptions:
+
+### 20a. Never write to the repository root
+- **Do not** create `index.html`, `style.css`, `game.js`, or any game asset directly at the repo root.
+- The root is shared across every run. Two different runs both writing `index.html` to root will collide — whichever PR merges second either conflicts or silently clobbers the first game.
+- The only thing that belongs at the root is `GAME_AGENT.md`.
+
+### 20b. Always create a new, uniquely-named folder for each game
+- Before writing any file, create a new directory for this game and put everything for that game inside it — HTML, any split CSS/JS, nothing spills outside the folder.
+- Name the folder so it cannot collide with any other run, past or future. Use a slug of the game concept plus a date/time or short unique token, for example:
+  ```
+  /2026-06-24-gravity-flip-platformer/
+  /2026-06-24-1410-color-swap-shooter/
+  ```
+- Do not reuse generic names like `game/`, `new-game/`, `project/`, or `index/` — these are exactly the names most likely to collide across runs.
+- If a top-level `games/` directory doesn't exist yet, create it once and put each game in its own subfolder beneath it going forward.
+
+### 20c. Check existing games before deciding what to build
+- Before picking a genre and twist, look at what already exists in the repo (e.g. list the `games/` directory, skim folder names and the one-line descriptions in their READMEs if present).
+- Deliberately avoid repeating the same genre+twist combination as an existing game. The routine runs unattended and blind to other in-flight PRs, so this check is the only thing standing between you and a repo full of near-duplicate games.
+- If you can't tell what's already there (e.g. the directory doesn't exist yet, or this is the first run), proceed normally — there's nothing to diverge from yet.
+
+### 20d. Self-contained PRs
+- Each run's PR should touch only its own new folder. Do not edit, move, or "clean up" other games' folders, and do not modify shared root files unless explicitly instructed to for that run.
+- This keeps every PR mergeable independently and in any order, which matters when a human is approving a backlog of several at once.
+
+This section overrides any earlier instruction in this document that implied a single root-level `index.html` per game — that pattern in Section 4 was written for one-off, single-game requests. When this agent is operating inside a multi-run repo (which is the default assumption from now on unless told otherwise), Section 20 takes precedence: every game gets its own folder, and the root stays untouched.
+
+---
+
 *End of contract. Build small, build complete, always add the twist, always include the menu / pause / SFX shell. Ship things that feel finished.*
