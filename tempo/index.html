@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>TEMPO — time moves when you do</title>
+<!--
+  TEMPO — a single-file, self-contained time-bending arena shooter
+  (HTML5 Canvas 2D + Web Audio). Built to the GAME_AGENT.md contract:
+  boots into a main menu, has a pause menu, synthesized SFX, one signature twist.
+
+  GENRE : top-down arena shooter / dodge-em-up
+  TWIST : "Time moves only when you do." The whole world — enemies, their
+          bullets, spawns — runs at the speed YOU move. Stand still and time
+          nearly freezes, letting you read the room and line up shots; sprint
+          and the storm roars to full speed. Your own shots always fly at full
+          speed, so the play is: freeze time, aim, fire, dance through the gaps.
+  CONTROLS: WASD / Arrows = move.  Mouse = aim, click / hold = shoot.
+            Esc / P = pause.  M = mute.   (Touch: left-half drag = move,
+            right-half tap/drag = aim & fire.)
+  GOAL : clear 12 escalating waves to WIN; one hit ends the run. Score from
+         kills, with a combo multiplier for fast back-to-back kills. Endless
+         feel with a real finish line. High score kept in memory (no storage).
+
+  Assumptions (request was generic): 2D, procedural art + synthesized SFX,
+  wave loop with both a win and a lose state. No external assets, no build step.
+-->
+<style>
+  :root{
+    --bg:#05060d; --ink:#eaf3ff; --dim:#7f8db0; --accent:#37e0ff;
+    --warm:#ff8a3d; --danger:#ff3b5c; --gold:#ffd34d; --ok:#5bff9b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    -webkit-user-select:none; user-select:none; touch-action:none;
+  }
+  #game{position:fixed; inset:0; display:block; cursor:crosshair; background:
+    radial-gradient(1000px 700px at 50% 42%, rgba(55,224,255,0.06), transparent 70%),
+    var(--bg);}
+
+  /* ---------- HUD ---------- */
+  #hud{
+    position:fixed; top:0; left:0; right:0; z-index:5; pointer-events:none;
+    display:flex; align-items:center; gap:18px; padding:14px 18px;
+    font-size:14px; letter-spacing:0.04em; text-shadow:0 2px 10px rgba(0,0,0,0.6);
+  }
+  #hud .pill{background:rgba(8,12,24,0.55); border:1px solid rgba(255,255,255,0.08);
+    border-radius:999px; padding:6px 14px; backdrop-filter:blur(4px)}
+  #hud .label{color:var(--dim); font-size:11px; letter-spacing:0.12em; text-transform:uppercase}
+  #hud .val{color:var(--accent); font-weight:700; font-size:17px}
+  #hud .combo .val{color:var(--gold)}
+  #hud .wave .val{color:var(--warm)}
+  #hud .spacer{flex:1}
+  /* time-bar shows how fast the world is currently running */
+  #timewrap{position:fixed; left:18px; bottom:16px; z-index:5; width:min(34vw,260px);
+    pointer-events:none}
+  #timewrap .cap{font-size:11px; letter-spacing:0.14em; color:var(--dim);
+    text-transform:uppercase; margin-bottom:6px}
+  #timebar{height:10px; border-radius:999px; background:rgba(255,255,255,0.08);
+    overflow:hidden; border:1px solid rgba(255,255,255,0.10)}
+  #timefill{height:100%; width:5%;
+    background:linear-gradient(90deg,#1b6f8f,var(--accent));
+    box-shadow:0 0 16px rgba(55,224,255,0.6); transition:width .06s linear}
+
+  /* ---------- Overlays ---------- */
+  .overlay{position:fixed; inset:0; z-index:10; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center; padding:24px;
+    background:radial-gradient(1100px 760px at 50% 40%, rgba(20,28,52,0.62), rgba(3,4,9,0.86));
+    backdrop-filter:blur(3px); opacity:1; transition:opacity .28s ease}
+  .overlay.hidden{opacity:0; pointer-events:none}
+  .title{
+    font-size:clamp(52px,16vw,140px); font-weight:800; letter-spacing:0.12em; line-height:0.9;
+    background:linear-gradient(110deg,#bff3ff,var(--accent) 48%,#7bd0ff);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    text-shadow:0 0 50px rgba(55,224,255,0.30);
+  }
+  .tag{margin-top:14px; color:var(--ink); font-size:clamp(14px,3.4vw,19px); max-width:560px}
+  .tag b{color:var(--accent)}
+  .sub{margin-top:8px; color:var(--dim); font-size:13px; max-width:560px; line-height:1.7}
+  .btns{margin-top:30px; display:flex; gap:14px; flex-wrap:wrap; justify-content:center}
+  button.b{
+    font-family:inherit; font-size:16px; font-weight:700; letter-spacing:0.05em;
+    color:#04121a; background:linear-gradient(180deg,#7fe9ff,var(--accent));
+    border:none; border-radius:12px; padding:14px 30px; cursor:pointer;
+    box-shadow:0 8px 24px rgba(55,224,255,0.28); transition:transform .12s ease, box-shadow .12s ease;
+  }
+  button.b:hover{transform:translateY(-2px); box-shadow:0 12px 30px rgba(55,224,255,0.4)}
+  button.b:active{transform:translateY(0)}
+  button.b.ghost{color:var(--ink); background:rgba(255,255,255,0.06);
+    border:1px solid rgba(255,255,255,0.16); box-shadow:none}
+  button.b.ghost:hover{background:rgba(255,255,255,0.12)}
+  .controls{margin-top:26px; color:var(--dim); font-size:13px; line-height:1.9; max-width:520px}
+  .controls .k{display:inline-block; min-width:22px; padding:2px 8px; margin:0 2px;
+    background:#10182c; border:1px solid #2a3656; border-radius:6px; color:#cfe2ff; font-size:12px}
+  .big{font-size:clamp(34px,9vw,64px); font-weight:800; letter-spacing:0.06em}
+  .big.win{color:var(--ok); text-shadow:0 0 40px rgba(91,255,155,0.4)}
+  .big.dead{color:var(--danger); text-shadow:0 0 40px rgba(255,59,92,0.4)}
+  .stat{margin-top:16px; font-size:18px; color:var(--ink)}
+  .stat b{color:var(--gold); font-size:24px}
+  .hint{margin-top:18px; color:var(--dim); font-size:12.5px; letter-spacing:0.06em}
+  .mutebtn{position:fixed; top:12px; right:14px; z-index:11; pointer-events:auto;
+    font-family:inherit; font-size:12px; letter-spacing:0.08em; color:var(--dim);
+    background:rgba(8,12,24,0.55); border:1px solid rgba(255,255,255,0.10);
+    border-radius:999px; padding:7px 13px; cursor:pointer}
+  .mutebtn:hover{color:var(--ink)}
+  .credit{position:fixed; bottom:12px; right:14px; z-index:5; color:var(--dim);
+    font-size:11px; letter-spacing:0.1em; pointer-events:none; opacity:0.7}
+</style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- HUD (visible during play) -->
+  <div id="hud" class="hidden">
+    <div class="pill wave"><span class="label">Wave</span> <span class="val" id="hWave">1</span></div>
+    <div class="pill"><span class="label">Score</span> <span class="val" id="hScore">0</span></div>
+    <div class="pill combo"><span class="label">Combo</span> <span class="val" id="hCombo">x1</span></div>
+    <div class="spacer"></div>
+    <div class="pill"><span class="label">Left</span> <span class="val" id="hLeft">0</span></div>
+  </div>
+  <div id="timewrap" class="hidden">
+    <div class="cap">Time flow</div>
+    <div id="timebar"><div id="timefill"></div></div>
+  </div>
+  <button class="mutebtn" id="muteBtn">♪ SOUND ON</button>
+
+  <!-- Main menu -->
+  <div id="menu" class="overlay">
+    <div class="title">TEMPO</div>
+    <div class="tag">Time moves <b>only when you do.</b> Stand still and the world holds its breath. Move, and the storm comes alive.</div>
+    <div class="controls">
+      <span class="k">W</span><span class="k">A</span><span class="k">S</span><span class="k">D</span> / arrows move &nbsp;·&nbsp;
+      <b style="color:#cfe2ff">mouse</b> aim &nbsp;·&nbsp; <b style="color:#cfe2ff">click</b> shoot<br>
+      <span class="k">Esc</span>/<span class="k">P</span> pause &nbsp;·&nbsp; <span class="k">M</span> mute &nbsp;·&nbsp; touch: left-drag move, right-tap fire
+    </div>
+    <div class="btns">
+      <button class="b" id="playBtn">▶ PLAY</button>
+    </div>
+    <div class="sub">Clear 12 waves to win. One hit ends the run. Freeze time, line up the shot, then dance through the bullets.</div>
+  </div>
+
+  <!-- Pause menu -->
+  <div id="pause" class="overlay hidden">
+    <div class="big">PAUSED</div>
+    <div class="btns">
+      <button class="b" id="resumeBtn">RESUME</button>
+      <button class="b ghost" id="restartBtn">RESTART</button>
+      <button class="b ghost" id="quitBtn">QUIT TO MENU</button>
+    </div>
+    <div class="controls"><span class="k">Esc</span>/<span class="k">P</span> resume &nbsp;·&nbsp; <span class="k">M</span> mute</div>
+  </div>
+
+  <!-- Game over / win -->
+  <div id="over" class="overlay hidden">
+    <div class="big dead" id="overTitle">GAME OVER</div>
+    <div class="stat" id="overMsg">You scored <b id="overScore">0</b></div>
+    <div class="hint" id="overBest">Best this session: 0</div>
+    <div class="btns">
+      <button class="b" id="againBtn">PLAY AGAIN</button>
+      <button class="b ghost" id="menuBtn">MAIN MENU</button>
+    </div>
+  </div>
+
+  <div class="credit">CLAUDE GAMES</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   TEMPO — time-bending arena shooter.  Single file, no dependencies.
+   Sections: CONFIG · STATE · AUDIO · INPUT · ENTITIES · SPAWN · UPDATE ·
+             RENDER · UI/MENUS · GAME LOOP · BOOT
+   ========================================================================= */
+
+// ===== CONFIG =====
+const CFG = {
+  player: { r: 11, speed: 330, accel: 2600, friction: 9 },
+  bullet: { r: 4, speed: 760, cd: 0.16, life: 1.4 },     // PLAYER bullets (always full speed)
+  enemyBullet: { r: 6, speed: 200, life: 6 },
+  // time scaling: world dt = realDt * timeScale; timeScale tracks player speed.
+  time: { idle: 0.045, ease: 9, shootBoost: 0.55, shootBoostT: 0.18 },
+  combo: { window: 2.2 },                                 // seconds between kills to keep combo
+  totalWaves: 12,
+  colors: {
+    player:'#37e0ff', bullet:'#bff3ff',
+    chaser:'#ff8a3d', gunner:'#ff3b5c', orbiter:'#c47bff',
+    ebul:'#ff5c7a', spawn:'#ffd34d'
+  },
+};
+
+// ===== STATE =====
+const GameState = { MENU:'MENU', PLAYING:'PLAYING', PAUSED:'PAUSED', OVER:'OVER', WIN:'WIN' };
+let state = GameState.MENU;
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0;                          // CSS pixels (logical play area)
+
+const G = {
+  player: null,
+  bullets: [],        // player bullets
+  ebullets: [],       // enemy bullets
+  enemies: [],
+  particles: [],
+  popups: [],
+  shake: 0,
+  timeScale: CFG.time.idle,
+  shootBoostT: 0,
+  score: 0,
+  best: 0,
+  combo: 1,
+  comboTimer: 0,
+  wave: 0,
+  waveActive: false,
+  spawnQueue: [],     // pending {x,y,type,t} telegraphed spawns
+  betweenWaves: 0,    // countdown timer (real seconds) before next wave
+  shootCd: 0,
+  flash: 0,           // brief world flash on impactful events
+};
+
+// ===== AUDIO =====
+const Sound = (() => {
+  let ctx2, muted = false;
+  const ensure = () => { if (!ctx2) ctx2 = new (window.AudioContext || window.webkitAudioContext)(); };
+  const unlock = () => { ensure(); if (ctx2.state === 'suspended') ctx2.resume(); };
+  function tone({ freq=440, dur=0.12, type='square', vol=0.2, slide=0, delay=0 }) {
+    if (muted) return;
+    ensure();
+    const t0 = ctx2.currentTime + delay;
+    const osc = ctx2.createOscillator(), gain = ctx2.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freq + slide), t0 + dur);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(vol, t0 + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(gain).connect(ctx2.destination);
+    osc.start(t0); osc.stop(t0 + dur + 0.02);
+  }
+  function noise({ dur=0.2, vol=0.2, delay=0 }) {
+    if (muted) return;
+    ensure();
+    const t0 = ctx2.currentTime + delay;
+    const n = Math.floor(ctx2.sampleRate * dur);
+    const buf = ctx2.createBuffer(1, n, ctx2.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i=0;i<n;i++) d[i] = (Math.random()*2-1) * (1 - i/n);
+    const src = ctx2.createBufferSource(); src.buffer = buf;
+    const g = ctx2.createGain();
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(g).connect(ctx2.destination);
+    src.start(t0);
+  }
+  return {
+    unlock,
+    shoot:   () => tone({ freq: 720, dur: 0.07, type:'square',   vol:0.10, slide:-380 }),
+    kill:    () => { tone({ freq: 420, dur: 0.10, type:'triangle', vol:0.18, slide:260 });
+                     noise({ dur:0.14, vol:0.10 }); },
+    ehit:    () => tone({ freq: 180, dur: 0.06, type:'square', vol:0.08, slide:-40 }),
+    efire:   () => tone({ freq: 240, dur: 0.10, type:'sawtooth', vol:0.07, slide:-120 }),
+    spawn:   () => tone({ freq: 520, dur: 0.08, type:'sine', vol:0.06, slide:160 }),
+    wave:    () => { tone({ freq: 440, dur:0.12, type:'triangle', vol:0.16, slide:220 });
+                     tone({ freq: 660, dur:0.18, type:'triangle', vol:0.14, slide:240, delay:0.10 }); },
+    click:   () => tone({ freq: 480, dur: 0.05, type:'square', vol:0.12 }),
+    win:     () => { [523,659,784,1047].forEach((f,i)=>tone({freq:f,dur:0.22,type:'triangle',vol:0.18,delay:i*0.13})); },
+    lose:    () => { tone({ freq: 220, dur:0.5, type:'sawtooth', vol:0.22, slide:-150 });
+                     noise({ dur:0.5, vol:0.16 }); },
+    toggleMute: () => (muted = !muted),
+    get muted(){ return muted; },
+  };
+})();
+
+// ===== INPUT =====
+const keys = {};
+const mouse = { x: 0, y: 0, down: false };
+// touch state: separate move stick (left half) and aim/fire (right half)
+const touch = { moveId:null, mox:0, moy:0, mx:0, my:0, dx:0, dy:0,
+                aimId:null, ax:0, ay:0, fire:false };
+
+addEventListener('keydown', (e) => {
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+  if (e.repeat) return;
+  keys[e.code] = true;
+  if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
+  if (e.code === 'KeyM') toggleMute();
+});
+addEventListener('keyup', (e) => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouse.down = false; });
+
+canvas.addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
+canvas.addEventListener('mousedown', (e) => { if (e.button===0){ mouse.down = true; mouse.x=e.clientX; mouse.y=e.clientY; } });
+addEventListener('mouseup',   (e) => { if (e.button===0) mouse.down = false; });
+
+// --- touch controls ---
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.clientX < W * 0.5 && touch.moveId === null) {
+      touch.moveId = t.identifier; touch.mox = t.clientX; touch.moy = t.clientY;
+      touch.mx = t.clientX; touch.my = t.clientY; touch.dx = 0; touch.dy = 0;
+    } else if (touch.aimId === null) {
+      touch.aimId = t.identifier; touch.ax = t.clientX; touch.ay = t.clientY; touch.fire = true;
+    }
+  }
+}, { passive:false });
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === touch.moveId) {
+      touch.mx = t.clientX; touch.my = t.clientY;
+      touch.dx = touch.mx - touch.mox; touch.dy = touch.my - touch.moy;
+    } else if (t.identifier === touch.aimId) {
+      touch.ax = t.clientX; touch.ay = t.clientY;
+    }
+  }
+}, { passive:false });
+function endTouch(e){
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === touch.moveId) { touch.moveId = null; touch.dx = 0; touch.dy = 0; }
+    if (t.identifier === touch.aimId)  { touch.aimId = null; touch.fire = false; }
+  }
+}
+canvas.addEventListener('touchend', endTouch, { passive:false });
+canvas.addEventListener('touchcancel', endTouch, { passive:false });
+
+// resolved per-frame intent (filled in readInput)
+const intent = { mx:0, my:0, aimx:0, aimy:0, firing:false };
+
+function readInput() {
+  let mx = 0, my = 0;
+  if (keys['KeyW'] || keys['ArrowUp']) my -= 1;
+  if (keys['KeyS'] || keys['ArrowDown']) my += 1;
+  if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
+  // touch stick overrides if active
+  if (touch.moveId !== null) {
+    const dz = 14, max = 70;
+    const len = Math.hypot(touch.dx, touch.dy);
+    if (len > dz) {
+      const f = Math.min(1, (len - dz) / (max - dz));
+      mx = (touch.dx / len) * f; my = (touch.dy / len) * f;
+    } else { mx = 0; my = 0; }
+  } else {
+    const l = Math.hypot(mx, my);
+    if (l > 0) { mx /= l; my /= l; }   // normalize diagonal keyboard
+  }
+  intent.mx = mx; intent.my = my;
+
+  // aim + fire
+  const p = G.player;
+  if (touch.aimId !== null) {
+    intent.aimx = touch.ax - p.x; intent.aimy = touch.ay - p.y;
+    intent.firing = true;
+  } else {
+    intent.aimx = mouse.x - p.x; intent.aimy = mouse.y - p.y;
+    intent.firing = mouse.down;
+  }
+}
+
+// ===== ENTITIES =====
+function makePlayer() {
+  return { x: W/2, y: H/2, vx: 0, vy: 0, r: CFG.player.r, alive: true };
+}
+
+// enemy factory.  types: chaser (rushes you), gunner (keeps distance, shoots),
+// orbiter (circles and dives).  hp scales slightly with wave.
+function makeEnemy(x, y, type, wave) {
+  const base = {
+    chaser:  { r:13, speed: 92,  hp:1, score:10 },
+    gunner:  { r:14, speed: 58,  hp:1, score:14, fireCd: 2.0 },
+    orbiter: { r:12, speed: 120, hp:2, score:18 },
+  }[type];
+  return {
+    x, y, vx:0, vy:0, type, r: base.r, hp: base.hp + (type==='orbiter'?0:0),
+    speed: base.speed * (1 + wave*0.04), score: base.score,
+    fireT: (base.fireCd || 0) * (0.5 + Math.random()*0.5),
+    fireCd: base.fireCd || 0,
+    ang: Math.random()*Math.PI*2, orbitDir: Math.random()<0.5?1:-1,
+    pulse: Math.random()*Math.PI*2,
+    hitFlash: 0, alive: true,
+  };
+}
+
+function spawnBurst(x, y, color, count=12, spd=3.4) {
+  for (let i=0;i<count;i++){
+    const a = Math.random()*Math.PI*2;
+    const s = spd*(0.4 + Math.random());
+    G.particles.push({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s,
+      life:1, max:1, color, r: 1.5+Math.random()*2.5 });
+  }
+}
+function addPopup(x, y, text, color) {
+  G.popups.push({ x, y, text, color, life:1 });
+}
+
+// ===== SPAWN / WAVES =====
+function waveComposition(w) {
+  // returns list of {type} for the wave; difficulty scales up
+  const list = [];
+  const n = 4 + Math.floor(w * 1.7);
+  for (let i=0;i<n;i++){
+    const r = Math.random();
+    let type;
+    if (w <= 1)            type = 'chaser';
+    else if (w <= 3)       type = r < 0.7 ? 'chaser' : 'gunner';
+    else if (w <= 6)       type = r < 0.5 ? 'chaser' : (r < 0.8 ? 'gunner' : 'orbiter');
+    else                   type = r < 0.4 ? 'chaser' : (r < 0.72 ? 'gunner' : 'orbiter');
+    list.push(type);
+  }
+  return list;
+}
+
+function startWave(w) {
+  G.wave = w;
+  G.waveActive = true;
+  const comp = waveComposition(w);
+  // telegraph spawns: queue each with a small stagger and a warning marker
+  let t = 0;
+  G.spawnQueue = comp.map((type) => {
+    t += 0.18 + Math.random()*0.25;
+    const m = 60; // margin from edge
+    // bias spawns to arena edges
+    let x, y;
+    const side = Math.floor(Math.random()*4);
+    if (side===0){ x = m + Math.random()*(W-2*m); y = m; }
+    else if (side===1){ x = W-m; y = m + Math.random()*(H-2*m); }
+    else if (side===2){ x = m + Math.random()*(W-2*m); y = H-m; }
+    else { x = m; y = m + Math.random()*(H-2*m); }
+    return { x, y, type, t, warn: 0.7 };
+  });
+  Sound.wave();
+  setHUD();
+}
+
+// ===== UPDATE =====
+function update(realDt) {
+  readInput();
+
+  // --- TIME SCALE: the twist. world speed tracks how fast the player moves ---
+  const p = G.player;
+  const moveMag = Math.min(1, Math.hypot(intent.mx, intent.my)); // 0..1 input
+  // also factor actual velocity so momentum keeps a little time flowing
+  const speedFrac = Math.min(1, Math.hypot(p.vx, p.vy) / CFG.player.speed);
+  let target = Math.max(moveMag, speedFrac * 0.85);
+  if (G.shootBoostT > 0) target = Math.max(target, CFG.time.shootBoost);
+  target = Math.max(CFG.time.idle, target);
+  // ease timeScale toward target for that smooth slow-mo feel
+  G.timeScale += (target - G.timeScale) * Math.min(1, CFG.time.ease * realDt);
+  G.shootBoostT = Math.max(0, G.shootBoostT - realDt);
+  const wdt = realDt * G.timeScale;  // WORLD delta time (enemies, enemy bullets, spawns)
+
+  // --- PLAYER MOVEMENT (real time — you always move at full speed) ---
+  const ax = intent.mx * CFG.player.accel;
+  const ay = intent.my * CFG.player.accel;
+  p.vx += ax * realDt; p.vy += ay * realDt;
+  // friction when no input
+  if (intent.mx === 0 && intent.my === 0) {
+    const f = Math.max(0, 1 - CFG.player.friction * realDt);
+    p.vx *= f; p.vy *= f;
+  }
+  // clamp to max speed
+  const sp = Math.hypot(p.vx, p.vy);
+  if (sp > CFG.player.speed) { p.vx = p.vx/sp*CFG.player.speed; p.vy = p.vy/sp*CFG.player.speed; }
+  p.x += p.vx * realDt; p.y += p.vy * realDt;
+  // keep inside arena
+  p.x = Math.max(p.r, Math.min(W - p.r, p.x));
+  p.y = Math.max(p.r, Math.min(H - p.r, p.y));
+
+  // --- PLAYER SHOOTING (bullets fly at full speed regardless of time) ---
+  G.shootCd -= realDt;
+  if (intent.firing && G.shootCd <= 0) {
+    const a = Math.atan2(intent.aimy, intent.aimx);
+    G.bullets.push({
+      x: p.x + Math.cos(a)*p.r, y: p.y + Math.sin(a)*p.r,
+      vx: Math.cos(a)*CFG.bullet.speed, vy: Math.sin(a)*CFG.bullet.speed,
+      r: CFG.bullet.r, life: CFG.bullet.life,
+    });
+    G.shootCd = CFG.bullet.cd;
+    G.shootBoostT = CFG.time.shootBoostT;   // shooting nudges time forward briefly
+    Sound.shoot();
+    spawnBurst(p.x + Math.cos(a)*p.r, p.y + Math.sin(a)*p.r, CFG.colors.bullet, 3, 1.6);
+  }
+
+  // --- SPAWN QUEUE (advances in WORLD time, so freezing slows incoming spawns) ---
+  for (const s of G.spawnQueue) s.t -= wdt;
+  for (let i=G.spawnQueue.length-1;i>=0;i--){
+    const s = G.spawnQueue[i];
+    if (s.t <= 0) {
+      G.enemies.push(makeEnemy(s.x, s.y, s.type, G.wave));
+      spawnBurst(s.x, s.y, CFG.colors.spawn, 10, 2.5);
+      Sound.spawn();
+      G.spawnQueue.splice(i,1);
+    }
+  }
+
+  // --- PLAYER BULLETS (real time) ---
+  for (let i=G.bullets.length-1;i>=0;i--){
+    const b = G.bullets[i];
+    b.x += b.vx*realDt; b.y += b.vy*realDt; b.life -= realDt;
+    if (b.life<=0 || b.x<-20||b.x>W+20||b.y<-20||b.y>H+20){ G.bullets.splice(i,1); continue; }
+    // hit enemies
+    for (const e of G.enemies) {
+      if (!e.alive) continue;
+      if ((b.x-e.x)**2 + (b.y-e.y)**2 < (b.r+e.r)**2) {
+        e.hp -= 1; e.hitFlash = 0.12;
+        b.dead = true;
+        spawnBurst(b.x, b.y, CFG.colors.ebul, 5, 2.2);
+        if (e.hp <= 0) killEnemy(e);
+        else Sound.ehit();
+        break;
+      }
+    }
+    if (b.dead){ G.bullets.splice(i,1); }
+  }
+
+  // --- ENEMIES (world time) ---
+  for (const e of G.enemies) {
+    if (!e.alive) continue;
+    e.hitFlash = Math.max(0, e.hitFlash - realDt);
+    e.pulse += realDt*6;
+    const dx = p.x - e.x, dy = p.y - e.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const nx = dx/dist, ny = dy/dist;
+
+    if (e.type === 'chaser') {
+      e.x += nx*e.speed*wdt; e.y += ny*e.speed*wdt;
+    } else if (e.type === 'gunner') {
+      // keep a preferred distance, strafe, and shoot
+      const want = 240;
+      const sgn = dist > want ? 1 : -0.7;
+      e.x += nx*e.speed*sgn*wdt; e.y += ny*e.speed*sgn*wdt;
+      // strafe perpendicular a bit
+      e.x += -ny*e.speed*0.4*wdt*e.orbitDir; e.y += nx*e.speed*0.4*wdt*e.orbitDir;
+      e.fireT -= wdt;
+      if (e.fireT <= 0) {
+        e.fireT = e.fireCd;
+        fireEnemyBullet(e.x, e.y, nx, ny);
+      }
+    } else if (e.type === 'orbiter') {
+      // orbit around the player then occasionally dive in
+      e.ang += e.orbitDir * 1.4 * wdt;
+      const orbitR = 200;
+      const tx = p.x + Math.cos(e.ang)*orbitR;
+      const ty = p.y + Math.sin(e.ang)*orbitR;
+      const odx = tx - e.x, ody = ty - e.y;
+      const ol = Math.hypot(odx, ody) || 1;
+      e.x += (odx/ol)*e.speed*wdt; e.y += (ody/ol)*e.speed*wdt;
+      // slow inward drift toward player
+      e.x += nx*e.speed*0.18*wdt; e.y += ny*e.speed*0.18*wdt;
+    }
+
+    // contact = death (one hit)
+    if ((p.x-e.x)**2 + (p.y-e.y)**2 < (p.r+e.r)**2) { playerHit(); return; }
+  }
+  // cull dead enemies
+  for (let i=G.enemies.length-1;i>=0;i--) if (!G.enemies[i].alive) G.enemies.splice(i,1);
+
+  // --- ENEMY BULLETS (world time, so dodgeable when time is slow) ---
+  for (let i=G.ebullets.length-1;i>=0;i--){
+    const b = G.ebullets[i];
+    b.x += b.vx*wdt; b.y += b.vy*wdt; b.life -= wdt;
+    if (b.life<=0 || b.x<-30||b.x>W+30||b.y<-30||b.y>H+30){ G.ebullets.splice(i,1); continue; }
+    if ((p.x-b.x)**2 + (p.y-b.y)**2 < (p.r+b.r)**2) { playerHit(); return; }
+  }
+
+  // --- COMBO timer (real time) ---
+  if (G.combo > 1) {
+    G.comboTimer -= realDt;
+    if (G.comboTimer <= 0) G.combo = 1, setHUD();
+  }
+
+  // --- PARTICLES & POPUPS (real time, always animate) ---
+  for (let i=G.particles.length-1;i>=0;i--){
+    const pt = G.particles[i];
+    pt.x += pt.vx; pt.y += pt.vy; pt.vx*=0.92; pt.vy*=0.92; pt.life -= realDt*1.8;
+    if (pt.life<=0) G.particles.splice(i,1);
+  }
+  for (let i=G.popups.length-1;i>=0;i--){
+    const u = G.popups[i];
+    u.y -= 28*realDt; u.life -= realDt*1.3;
+    if (u.life<=0) G.popups.splice(i,1);
+  }
+
+  // --- decay shake / flash ---
+  G.shake *= Math.max(0, 1 - 10*realDt);
+  if (G.shake < 0.05) G.shake = 0;
+  G.flash = Math.max(0, G.flash - realDt*3);
+
+  // --- WAVE PROGRESSION ---
+  if (G.waveActive && G.spawnQueue.length === 0 && G.enemies.length === 0) {
+    G.waveActive = false;
+    if (G.wave >= CFG.totalWaves) { winGame(); return; }
+    G.betweenWaves = 2.0;
+    addPopup(p.x, p.y - 36, 'WAVE CLEAR', CFG.colors.player);
+  }
+  if (!G.waveActive) {
+    G.betweenWaves -= realDt;
+    if (G.betweenWaves <= 0) startWave(G.wave + 1);
+  }
+
+  setHUD();
+}
+
+function fireEnemyBullet(x, y, nx, ny) {
+  G.ebullets.push({ x, y, vx:nx*CFG.enemyBullet.speed, vy:ny*CFG.enemyBullet.speed,
+    r:CFG.enemyBullet.r, life:CFG.enemyBullet.life });
+  Sound.efire();
+}
+
+function killEnemy(e) {
+  e.alive = false;
+  // combo
+  if (G.combo < 99) G.combo += 1; else G.combo = 99;
+  G.comboTimer = CFG.combo.window;
+  const gained = e.score * G.combo;
+  G.score += gained;
+  spawnBurst(e.x, e.y, CFG.colors[e.type] || CFG.colors.ebul, 18, 4);
+  addPopup(e.x, e.y, '+' + gained, CFG.colors.gold || '#ffd34d');
+  G.shake = Math.min(14, G.shake + 5);
+  G.flash = Math.min(1, G.flash + 0.25);
+  Sound.kill();
+  setHUD();
+}
+
+function playerHit() {
+  if (state !== GameState.PLAYING) return;
+  G.player.alive = false;
+  G.shake = 22; G.flash = 1;
+  spawnBurst(G.player.x, G.player.y, CFG.colors.player, 40, 6);
+  Sound.lose();
+  endGame();
+}
+
+// ===== RENDER =====
+function render() {
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.save();
+  if (G.shake > 0) {
+    const sx = (Math.random()-0.5)*G.shake, sy = (Math.random()-0.5)*G.shake;
+    ctx.translate(sx, sy);
+  }
+
+  drawArena();
+
+  // spawn warnings (telegraph)
+  for (const s of G.spawnQueue) {
+    if (s.t < s.warn) {
+      const k = 1 - s.t / s.warn;
+      ctx.globalAlpha = 0.25 + 0.5*k;
+      ctx.strokeStyle = CFG.colors.spawn;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 10 + (1-k)*22, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 4, 0, Math.PI*2);
+      ctx.fillStyle = CFG.colors.spawn; ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // enemy bullets
+  for (const b of G.ebullets) {
+    ctx.beginPath();
+    ctx.fillStyle = CFG.colors.ebul;
+    ctx.shadowColor = CFG.colors.ebul; ctx.shadowBlur = 10;
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+
+  // enemies
+  for (const e of G.enemies) drawEnemy(e);
+
+  // player bullets
+  for (const b of G.bullets) {
+    ctx.beginPath();
+    ctx.fillStyle = CFG.colors.bullet;
+    ctx.shadowColor = CFG.colors.accent || CFG.colors.player; ctx.shadowBlur = 12;
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+
+  // particles
+  for (const pt of G.particles) {
+    ctx.globalAlpha = Math.max(0, pt.life);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, pt.r * Math.max(0.2, pt.life), 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // player
+  if (G.player && G.player.alive) drawPlayer();
+
+  // popups
+  for (const u of G.popups) {
+    ctx.globalAlpha = Math.max(0, u.life);
+    ctx.fillStyle = u.color;
+    ctx.font = '700 16px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(u.text, u.x, u.y);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+
+  // world flash overlay
+  if (G.flash > 0) {
+    ctx.globalAlpha = G.flash * 0.18;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0,0,W,H);
+    ctx.globalAlpha = 1;
+  }
+
+  // "time frozen" vignette when world is slow — visual cue for the twist
+  const frozen = 1 - Math.min(1, (G.timeScale - CFG.time.idle) / (1 - CFG.time.idle));
+  if (frozen > 0.05 && state === GameState.PLAYING) {
+    const g = ctx.createRadialGradient(W/2,H/2, Math.min(W,H)*0.25, W/2,H/2, Math.max(W,H)*0.7);
+    g.addColorStop(0, 'rgba(55,224,255,0)');
+    g.addColorStop(1, `rgba(40,120,200,${0.12*frozen})`);
+    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  }
+}
+
+function drawArena() {
+  // subtle grid; tint cooler when time is slow
+  const frozen = 1 - Math.min(1, (G.timeScale - CFG.time.idle) / (1 - CFG.time.idle));
+  ctx.strokeStyle = `rgba(90,130,190,${0.06 + 0.05*frozen})`;
+  ctx.lineWidth = 1;
+  const step = 48;
+  ctx.beginPath();
+  for (let x=0; x<=W; x+=step){ ctx.moveTo(x,0); ctx.lineTo(x,H); }
+  for (let y=0; y<=H; y+=step){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
+  ctx.stroke();
+  // border
+  ctx.strokeStyle = 'rgba(120,170,230,0.18)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(2,2,W-4,H-4);
+}
+
+function drawPlayer() {
+  const p = G.player;
+  // aim line
+  const a = Math.atan2(intent.aimy, intent.aimx);
+  ctx.strokeStyle = 'rgba(191,243,255,0.35)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y);
+  ctx.lineTo(p.x + Math.cos(a)*30, p.y + Math.sin(a)*30);
+  ctx.stroke();
+  // body
+  ctx.shadowColor = CFG.colors.player; ctx.shadowBlur = 18;
+  ctx.fillStyle = CFG.colors.player;
+  ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+  ctx.shadowBlur = 0;
+  // inner core
+  ctx.fillStyle = '#04121a';
+  ctx.beginPath(); ctx.arc(p.x, p.y, p.r*0.45, 0, Math.PI*2); ctx.fill();
+  // gun nub
+  ctx.fillStyle = CFG.colors.bullet;
+  ctx.beginPath(); ctx.arc(p.x + Math.cos(a)*p.r, p.y + Math.sin(a)*p.r, 3.5, 0, Math.PI*2); ctx.fill();
+}
+
+function drawEnemy(e) {
+  const c = CFG.colors[e.type] || '#fff';
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  const flash = e.hitFlash > 0;
+  ctx.shadowColor = c; ctx.shadowBlur = 12;
+  ctx.fillStyle = flash ? '#ffffff' : c;
+  ctx.strokeStyle = flash ? '#ffffff' : c;
+  ctx.lineWidth = 2;
+  if (e.type === 'chaser') {
+    // triangle pointing at player
+    const a = Math.atan2(G.player.y - e.y, G.player.x - e.x);
+    ctx.rotate(a);
+    ctx.beginPath();
+    ctx.moveTo(e.r, 0); ctx.lineTo(-e.r*0.8, e.r*0.8); ctx.lineTo(-e.r*0.8, -e.r*0.8);
+    ctx.closePath(); ctx.fill();
+  } else if (e.type === 'gunner') {
+    // square with a pulsing ring
+    const s = e.r;
+    ctx.fillRect(-s, -s, s*2, s*2);
+    ctx.globalAlpha = 0.4 + 0.3*Math.sin(e.pulse);
+    ctx.beginPath(); ctx.arc(0,0, s + 5, 0, Math.PI*2); ctx.stroke();
+    ctx.globalAlpha = 1;
+  } else { // orbiter — diamond
+    const s = e.r * (1 + 0.12*Math.sin(e.pulse));
+    ctx.beginPath();
+    ctx.moveTo(0,-s); ctx.lineTo(s,0); ctx.lineTo(0,s); ctx.lineTo(-s,0);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+  ctx.shadowBlur = 0;
+}
+
+// ===== UI / MENUS =====
+const el = (id) => document.getElementById(id);
+const hud = el('hud'), timewrap = el('timewrap');
+const menuO = el('menu'), pauseO = el('pause'), overO = el('over');
+
+function show(o){ o.classList.remove('hidden'); }
+function hide(o){ o.classList.add('hidden'); }
+
+function setHUD() {
+  el('hWave').textContent = Math.max(1, G.wave);
+  el('hScore').textContent = G.score;
+  el('hCombo').textContent = 'x' + G.combo;
+  el('hLeft').textContent = G.spawnQueue.length + G.enemies.length;
+}
+
+function updateTimeBar() {
+  const pct = Math.round(G.timeScale * 100);
+  el('timefill').style.width = Math.max(4, pct) + '%';
+}
+
+function resetGame() {
+  G.player = makePlayer();
+  G.bullets.length = 0; G.ebullets.length = 0; G.enemies.length = 0;
+  G.particles.length = 0; G.popups.length = 0; G.spawnQueue.length = 0;
+  G.shake = 0; G.flash = 0; G.timeScale = CFG.time.idle; G.shootBoostT = 0;
+  G.score = 0; G.combo = 1; G.comboTimer = 0; G.wave = 0; G.waveActive = false;
+  G.betweenWaves = 0; G.shootCd = 0;
+}
+
+function startGame() {
+  Sound.unlock();
+  resetGame();
+  state = GameState.PLAYING;
+  hide(menuO); hide(pauseO); hide(overO);
+  show(hud); show(timewrap);
+  setHUD();
+  startWave(1);
+}
+
+function togglePause() {
+  if (state === GameState.PLAYING) {
+    state = GameState.PAUSED;
+    show(pauseO);
+    Sound.click();
+  } else if (state === GameState.PAUSED) {
+    resumeGame();
+  }
+}
+function resumeGame() {
+  if (state !== GameState.PAUSED) return;
+  state = GameState.PLAYING;
+  hide(pauseO);
+  last = performance.now();   // avoid a dt spike after pause
+  Sound.click();
+}
+
+function endGame() {
+  state = GameState.OVER;
+  G.best = Math.max(G.best, G.score);
+  el('overTitle').textContent = 'GAME OVER';
+  el('overTitle').className = 'big dead';
+  el('overMsg').innerHTML = 'You fell on wave ' + Math.max(1,G.wave) + ' with <b>' + G.score + '</b>';
+  el('overBest').textContent = 'Best this session: ' + G.best;
+  hide(hud); hide(timewrap);
+  show(overO);
+}
+
+function winGame() {
+  state = GameState.WIN;
+  G.best = Math.max(G.best, G.score);
+  el('overTitle').textContent = 'YOU SURVIVED';
+  el('overTitle').className = 'big win';
+  el('overMsg').innerHTML = 'All 12 waves cleared — final score <b>' + G.score + '</b>';
+  el('overBest').textContent = 'Best this session: ' + G.best;
+  spawnBurst(G.player.x, G.player.y, CFG.colors.player, 50, 7);
+  hide(hud); hide(timewrap);
+  show(overO);
+  Sound.win();
+}
+
+function returnToMenu() {
+  state = GameState.MENU;
+  hide(pauseO); hide(overO); hide(hud); hide(timewrap);
+  show(menuO);
+  Sound.click();
+}
+
+function toggleMute() {
+  Sound.toggleMute();
+  el('muteBtn').textContent = Sound.muted ? '♪ SOUND OFF' : '♪ SOUND ON';
+}
+
+// button wiring
+el('playBtn').onclick    = () => { Sound.click(); startGame(); };
+el('resumeBtn').onclick  = () => resumeGame();
+el('restartBtn').onclick = () => { Sound.click(); startGame(); };
+el('quitBtn').onclick    = () => returnToMenu();
+el('againBtn').onclick   = () => { Sound.click(); startGame(); };
+el('menuBtn').onclick    = () => returnToMenu();
+el('muteBtn').onclick    = () => { toggleMute(); };
+
+// ===== GAME LOOP =====
+let last = performance.now();
+function frame(now) {
+  const realDt = Math.min((now - last) / 1000, 0.05); // clamp post-tab-out spikes
+  last = now;
+
+  if (state === GameState.PLAYING) {
+    update(realDt);
+    updateTimeBar();
+  } else {
+    // keep menus' time bar idle and gently decay shake/particles for polish
+    G.shake *= 0.9;
+  }
+  render();
+  requestAnimationFrame(frame);
+}
+
+// ===== BOOT =====
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.floor(W * dpr);
+  canvas.height = Math.floor(H * dpr);
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (!G.player) { mouse.x = W/2; mouse.y = H/2 - 80; }
+}
+addEventListener('resize', resize);
+resize();
+mouse.x = W/2; mouse.y = H/2 - 80;
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
