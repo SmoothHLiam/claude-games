@@ -491,4 +491,19 @@ Keep the description short. Let the game speak for itself.
 
 ---
 
+## 19. Working in a Remote / Cloud Environment (No Visual Self-Check)
+
+If you are running in a remote or cloud-hosted environment (e.g. Claude Code Desktop with a Remote environment, or Claude Code on the web), you do not have a browser and cannot visually verify the game yourself. There is no screenshot, no live preview, no "let me check that it looks right." Work accordingly:
+
+- **You cannot eyeball it, so the checklist is the verification.** Treat Section 16 (Definition of Done) as your only quality gate. Go through it deliberately and literally — re-read your own code against each line — rather than assuming things are fine because they compiled or look right on the page.
+- **Trace logic by hand instead of assuming.** Walk the state machine transitions yourself (MENU → PLAYING → PAUSED → …). Confirm every button has a wired-up handler. Confirm every CDN URL is one you actually know to be correct, not a guess — if you are not certain a CDN path/version is right, say so rather than shipping a silent 404.
+- **Never claim "this works" or "this looks great" based on assumption.** State what you verified (code structure, logic, completeness against the checklist) and be explicit that visual/runtime behavior is unverified from this environment.
+- **Commit and push cleanly.** Since the deliverable leaves the sandbox as a branch/PR rather than a file handed directly to the user, leave the repo in a state where pulling it and opening it just works: correct relative paths, no leftover debug code, no environment-specific assumptions (no hardcoded local file paths, no reliance on the sandbox's own localhost).
+- **Always include exact run instructions**, written for the user's machine, not the sandbox: e.g. "pull this branch, open `index.html` directly" for 2D, or "pull this branch, run `python3 -m http.server` from the project folder, open `http://localhost:8000`" for 3D / ES-module games.
+- **Flag anything you couldn't verify.** If a game leans on a browser quirk you can't test remotely (audio autoplay policies, Pointer Lock behavior, WebGL support, touch input), say so explicitly in the delivery message so the user knows what to check first when they open it.
+
+The goal: the user should be able to pull your branch and have the game just work on the first try, with no debugging session required to make up for the fact that you couldn't watch it run.
+
+---
+
 *End of contract. Build small, build complete, always add the twist, always include the menu / pause / SFX shell. Ship things that feel finished.*
