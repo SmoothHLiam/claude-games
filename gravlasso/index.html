@@ -1160,6 +1160,14 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // ===== BOOT =====
+// Initialize entity arrays so render() (which runs in every state, including
+// MENU) never iterates an undefined array before the first startGame().
+player      = makePlayer();
+asteroids   = [];
+enemies     = [];
+projectiles = [];
+particles   = [];
+scorePopups = [];
 initStars();
 showOverlay('menu');
 </script>
