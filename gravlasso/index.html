@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>GRAVLASSO</title>
+<!--
+  ============================================================================
+  GRAVLASSO  —  a single-file HTML5 Canvas asteroid-arena game
+  ----------------------------------------------------------------------------
+  GENRE   : Top-down arena survival / asteroid shooter.
+  TWIST   : NO GUNS. Your only weapon is a GRAVITY LASSO. Hold Space to
+            pull the nearest asteroid toward you, aim with the mouse, and
+            release to fling it. Hurl rocks into other rocks for chain
+            reactions. Enemy drones arrive from Wave 3 — lasso an asteroid
+            into them to clear the screen. Every kill while no hit builds
+            your COMBO multiplier.
+  CONTROLS: WASD / Arrows = thrust   Mouse = aim   Space (hold/release) = lasso
+            Esc / P = pause   M = mute   Click "PLAY" or press Enter to start
+  GOAL    : Survive escalating waves, chain kills for combos, chase the high
+            score. Three lives — game ends when all are lost.
+
+  DEFAULTS (per GAME_AGENT.md): 2D Canvas, procedural art, Web Audio SFX,
+  endless score loop with lose state. No CDN, no build step — open index.html.
+  ============================================================================
+-->
+<style>
+  :root {
+    --bg:     #07080f;
+    --ink:    #d8f0ff;
+    --accent: #00ffcc;
+    --warn:   #ff4466;
+    --gold:   #ffd34d;
+    --dim:    #6a7a99;
+    --enemy:  #ff4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    overflow: hidden;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #wrap { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  /* ── Overlay base ── */
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 18px;
+    background: rgba(7,8,15,0.82);
+    z-index: 10;
+    transition: opacity 0.18s;
+  }
+  .overlay.hidden { display: none; }
+
+  .title {
+    font-size: clamp(48px, 10vw, 96px);
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    background: linear-gradient(120deg, #00ffcc 0%, #00bbff 55%, #ff66ff 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+    text-shadow: none;
+  }
+  .tagline {
+    font-size: clamp(12px, 2.2vw, 16px);
+    color: var(--dim);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    max-width: 480px;
+    text-align: center;
+    line-height: 1.5;
+  }
+  .btn {
+    padding: 12px 36px;
+    font: inherit;
+    font-size: clamp(13px, 2.2vw, 16px);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    border: 2px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.12s, color 0.12s;
+  }
+  .btn:hover, .btn:focus { background: var(--accent); color: #07080f; outline: none; }
+  .btn.warn { border-color: var(--warn); color: var(--warn); }
+  .btn.warn:hover { background: var(--warn); color: #07080f; }
+
+  .controls-box {
+    border: 1px solid rgba(0,255,204,0.2);
+    border-radius: 6px;
+    padding: 14px 24px;
+    font-size: clamp(11px, 1.8vw, 13px);
+    color: var(--dim);
+    line-height: 2;
+    text-align: left;
+    max-width: 400px;
+    width: 90%;
+  }
+  .controls-box span { color: var(--ink); }
+
+  .hiscore { font-size: 13px; color: var(--dim); letter-spacing: 0.1em; }
+  .hiscore b { color: var(--gold); }
+
+  /* pause / gameover specific */
+  #pause h2, #gameover h2 {
+    font-size: clamp(28px, 5vw, 44px);
+    letter-spacing: 0.1em;
+    color: var(--ink);
+  }
+  #gameover .final-score { font-size: clamp(20px, 4vw, 32px); color: var(--gold); }
+  .mute-btn {
+    font-size: 12px; color: var(--dim);
+    background: none; border: none; cursor: pointer; font-family: inherit;
+    text-transform: uppercase; letter-spacing: 0.1em;
+  }
+  .mute-btn:hover { color: var(--ink); }
+  .btn-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game"></canvas>
+
+  <!-- ── MAIN MENU ── -->
+  <div id="menu" class="overlay">
+    <div class="title">GRAVLASSO</div>
+    <div class="tagline">You have no guns — grab asteroids with your gravity lasso<br>and fling them at everything else</div>
+    <div class="controls-box">
+      <span>WASD / Arrows</span> — thrust<br>
+      <span>Mouse</span> — aim<br>
+      <span>Space (hold → release)</span> — lasso &amp; fling<br>
+      <span>Esc / P</span> — pause &nbsp; <span>M</span> — mute
+    </div>
+    <div class="hiscore" id="menu-hi">HI &nbsp;<b>0</b></div>
+    <div class="btn-row">
+      <button class="btn" id="btn-play">PLAY</button>
+      <button class="mute-btn" id="btn-mute-menu">♪ SOUND ON</button>
+    </div>
+  </div>
+
+  <!-- ── PAUSE ── -->
+  <div id="pause" class="overlay hidden">
+    <h2>PAUSED</h2>
+    <div class="btn-row">
+      <button class="btn" id="btn-resume">RESUME</button>
+      <button class="btn" id="btn-restart-pause">RESTART</button>
+      <button class="btn warn" id="btn-menu-pause">MAIN MENU</button>
+    </div>
+    <button class="mute-btn" id="btn-mute-pause">♪ SOUND ON</button>
+  </div>
+
+  <!-- ── GAME OVER ── -->
+  <div id="gameover" class="overlay hidden">
+    <h2>GAME OVER</h2>
+    <div class="final-score" id="go-score">SCORE &nbsp;0</div>
+    <div class="hiscore" id="go-hi">HI &nbsp;<b>0</b></div>
+    <div class="btn-row">
+      <button class="btn" id="btn-again">PLAY AGAIN</button>
+      <button class="btn warn" id="btn-menu-go">MAIN MENU</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== CONFIG =====
+const CFG = {
+  PLAYER_THRUST:    380,
+  PLAYER_MAX_SPEED: 310,
+  PLAYER_FRICTION:  0.984,
+  PLAYER_RADIUS:    13,
+  PLAYER_INVUL:     2.2,   // seconds of invulnerability after hit
+
+  LASSO_RANGE:      210,
+  LASSO_PULL:       540,   // px/s² pull acceleration
+  LASSO_ORBIT_R:    46,    // orbit radius while held
+  LASSO_FLING:      560,   // px/s fling speed on release
+
+  AST_SIZES: [
+    { r: 40, scoreBase: 10, tier: 0, boom: 'lg' },
+    { r: 22, scoreBase: 25, tier: 1, boom: 'md' },
+    { r: 13, scoreBase: 50, tier: 2, boom: 'sm' },
+  ],
+  AST_SPEED_BASE:  60,
+  AST_SPEED_SCALE: 1.18,
+
+  ENEMY_RADIUS:     11,
+  ENEMY_SPEED:      78,
+  ENEMY_SCORE:      200,
+  ENEMY_WAVE_START: 3,
+
+  WAVE_ASTEROIDS_BASE: 4,
+  WAVE_ASTEROIDS_INC:  2,
+  WAVE_ENEMIES_INC:    1,  // per wave after wave 3
+
+  COMBO_RESET_ON_HIT: true,
+  COMBO_MULT: [1, 1, 2, 2, 3, 3, 4, 4, 5],  // indexed by Math.min(combo, 8)
+
+  STAR_COUNT: 120,
+  SHAKE_DECAY: 0.88,
+
+  WAVE_PAUSE: 1.6,  // seconds between waves
+};
+
+// ===== STATE =====
+const GameState = { MENU:'MENU', PLAYING:'PLAYING', PAUSED:'PAUSED', GAME_OVER:'GAME_OVER' };
+let gs = GameState.MENU;
+
+let player, asteroids, enemies, projectiles, particles, scorePopups, stars;
+let score, hiScore = 0, lives, wave, combo, shake;
+let waveTimer = 0;      // countdown to next wave
+let waveBanner = 0;     // show "WAVE N" banner timer
+let thrustTimer = 0;    // throttle thrust SFX
+
+// ===== CANVAS SETUP =====
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 800, H = 600;
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ===== AUDIO =====
+const Sound = (() => {
+  let actx;
+  let muted = false;
+  const ensure = () => {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  };
+  const unlock = () => { ensure(); if (actx.state === 'suspended') actx.resume(); };
+
+  function tone({ freq=440, dur=0.12, type='square', vol=0.15, slide=0 }) {
+    if (muted) return;
+    ensure();
+    const osc  = actx.createOscillator();
+    const gain = actx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, actx.currentTime);
+    if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freq + slide), actx.currentTime + dur);
+    gain.gain.setValueAtTime(vol, actx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
+    osc.connect(gain).connect(actx.destination);
+    osc.start(); osc.stop(actx.currentTime + dur);
+  }
+
+  function noise({ dur=0.15, vol=0.18, hpFreq=0 }) {
+    if (muted) return;
+    ensure();
+    const sr   = actx.sampleRate;
+    const n    = Math.ceil(sr * dur);
+    const buf  = actx.createBuffer(1, n, sr);
+    const d    = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    const src  = actx.createBufferSource();
+    src.buffer = buf;
+    const gain = actx.createGain();
+    gain.gain.setValueAtTime(vol, actx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
+    let node = src;
+    if (hpFreq) {
+      const hp = actx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = hpFreq;
+      src.connect(hp); node = hp;
+    }
+    node.connect(gain).connect(actx.destination);
+    src.start(); src.stop(actx.currentTime + dur);
+  }
+
+  const sfx = {
+    thrust:    () => tone({ freq:90,  dur:0.09, type:'sawtooth', vol:0.06, slide:-25 }),
+    lassoGrab: () => tone({ freq:180, dur:0.10, type:'sine',     vol:0.13, slide:120 }),
+    lassoHold: () => tone({ freq:260, dur:0.06, type:'sine',     vol:0.07, slide:40  }),
+    fling:     () => tone({ freq:380, dur:0.14, type:'square',   vol:0.14, slide:-320 }),
+    boomLg:    () => noise({ dur:0.38, vol:0.28 }),
+    boomMd:    () => noise({ dur:0.22, vol:0.20, hpFreq:80 }),
+    boomSm:    () => noise({ dur:0.13, vol:0.14, hpFreq:150 }),
+    enemyDie:  () => { tone({ freq:700, dur:0.12, type:'square', vol:0.18, slide:-600 }); },
+    playerHit: () => { tone({ freq:110, dur:0.45, type:'sawtooth', vol:0.28, slide:-80 }); },
+    click:     () => tone({ freq:440, dur:0.05, type:'square', vol:0.11 }),
+    newWave:   () => {
+      tone({ freq:220, dur:0.12, type:'triangle', vol:0.18 });
+      setTimeout(() => tone({ freq:440, dur:0.18, type:'triangle', vol:0.18 }), 130);
+      setTimeout(() => tone({ freq:660, dur:0.22, type:'triangle', vol:0.18 }), 280);
+    },
+    lose:      () => tone({ freq:90, dur:0.7, type:'sawtooth', vol:0.28, slide:-70 }),
+    combo:     () => tone({ freq:660, dur:0.09, type:'triangle', vol:0.16, slide:200 }),
+  };
+
+  return {
+    unlock, ...sfx,
+    toggleMute() { muted = !muted; return muted; },
+    get muted() { return muted; },
+  };
+})();
+
+// ===== INPUT =====
+const keys = {};
+const mouse = { x: W / 2, y: H / 2 };
+
+window.addEventListener('keydown', e => {
+  if (!keys[e.code]) {
+    // first press of space while playing → lasso grab sound
+    if (e.code === 'Space' && gs === GameState.PLAYING) Sound.lassoGrab();
+  }
+  keys[e.code] = true;
+  if ((e.code === 'Escape' || e.code === 'KeyP') && gs === GameState.PLAYING)  pauseGame();
+  else if ((e.code === 'Escape' || e.code === 'KeyP') && gs === GameState.PAUSED) resumeGame();
+  if (e.code === 'KeyM') { Sound.toggleMute(); updateMuteLabels(); }
+  if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = (e.clientX - r.left) * (W / r.width);
+  mouse.y = (e.clientY - r.top)  * (H / r.height);
+});
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  const t = e.touches[0];
+  mouse.x = (t.clientX - r.left) * (W / r.width);
+  mouse.y = (t.clientY - r.top)  * (H / r.height);
+}, { passive: false });
+// Touch hold = lasso
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  keys['Space'] = true;
+  const r = canvas.getBoundingClientRect();
+  const t = e.touches[0];
+  mouse.x = (t.clientX - r.left) * (W / r.width);
+  mouse.y = (t.clientY - r.top)  * (H / r.height);
+  Sound.lassoGrab();
+}, { passive: false });
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  keys['Space'] = false;
+}, { passive: false });
+
+// ===== ENTITIES =====
+function makePlayer() {
+  return {
+    x: W / 2, y: H / 2,
+    vx: 0, vy: 0,
+    angle: -Math.PI / 2,  // facing up
+    invul: 0,
+    lassoTarget: null,    // asteroid being held
+    lassoActive: false,
+    lassoGrabbed: false,  // asteroid locked in orbit
+    thrustFx: 0,
+  };
+}
+
+function makeAsteroid(x, y, tier, vx, vy) {
+  const sz  = CFG.AST_SIZES[tier];
+  const spd = CFG.AST_SPEED_BASE * Math.pow(CFG.AST_SPEED_SCALE, wave);
+  if (vx === undefined) {
+    const a = Math.random() * Math.PI * 2;
+    vx = Math.cos(a) * spd * (0.6 + Math.random() * 0.8);
+    vy = Math.sin(a) * spd * (0.6 + Math.random() * 0.8);
+  }
+  // Pre-generate crater positions for consistent rendering
+  const craters = [];
+  const nc = Math.floor(sz.r / 10) + 1;
+  for (let i = 0; i < nc; i++) {
+    const ca = Math.random() * Math.PI * 2;
+    const cd = Math.random() * sz.r * 0.55;
+    craters.push({ a: ca, d: cd, r: 2 + Math.random() * (sz.r * 0.18) });
+  }
+  return {
+    x, y, vx, vy,
+    r: sz.r, tier,
+    spin: (Math.random() - 0.5) * 1.2,
+    angle: Math.random() * Math.PI * 2,
+    craters,
+    flung: false,     // true when flying as a lasso projectile
+    flungVx: 0, flungVy: 0,
+    hp: 1,
+  };
+}
+
+function makeEnemy(x, y) {
+  return { x, y, vx: 0, vy: 0, r: CFG.ENEMY_RADIUS, hp: 1 };
+}
+
+function spawnBurst(x, y, color, count = 12, speedMult = 1) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = (1.5 + Math.random() * 3) * speedMult;
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      life: 1,
+      size: 1.5 + Math.random() * 3,
+      color,
+    });
+  }
+}
+
+function spawnWave() {
+  const count = CFG.WAVE_ASTEROIDS_BASE + (wave - 1) * CFG.WAVE_ASTEROIDS_INC;
+  for (let i = 0; i < count; i++) {
+    // Spawn off-screen edges
+    let x, y;
+    const side = Math.floor(Math.random() * 4);
+    if (side === 0) { x = Math.random() * W; y = -50; }
+    else if (side === 1) { x = W + 50; y = Math.random() * H; }
+    else if (side === 2) { x = Math.random() * W; y = H + 50; }
+    else { x = -50; y = Math.random() * H; }
+    asteroids.push(makeAsteroid(x, y, 0));
+  }
+
+  // Enemies from wave 3+
+  if (wave >= CFG.ENEMY_WAVE_START) {
+    const ec = (wave - CFG.ENEMY_WAVE_START + 1) * CFG.WAVE_ENEMIES_INC;
+    for (let i = 0; i < ec; i++) {
+      const a  = (i / ec) * Math.PI * 2;
+      const ex = W / 2 + Math.cos(a) * (Math.min(W, H) * 0.48);
+      const ey = H / 2 + Math.sin(a) * (Math.min(W, H) * 0.48);
+      enemies.push(makeEnemy(ex, ey));
+    }
+  }
+
+  Sound.newWave();
+  waveBanner = 2.2;
+}
+
+// ===== STARS =====
+function initStars() {
+  stars = [];
+  for (let i = 0; i < CFG.STAR_COUNT; i++) {
+    stars.push({
+      x: Math.random() * W, y: Math.random() * H,
+      r: 0.4 + Math.random() * 1.2,
+      bright: 0.3 + Math.random() * 0.7,
+    });
+  }
+}
+
+// ===== GAME STATE TRANSITIONS =====
+function startGame() {
+  Sound.unlock();
+  player      = makePlayer();
+  asteroids   = [];
+  enemies     = [];
+  projectiles = [];
+  particles   = [];
+  scorePopups = [];
+  score       = 0;
+  lives       = 3;
+  wave        = 0;
+  combo       = 0;
+  shake       = 0;
+  waveTimer   = 0;
+  waveBanner  = 0;
+  thrustTimer = 0;
+  initStars();
+  gs = GameState.PLAYING;
+  showOverlay(null);
+  // Start wave 1 immediately
+  wave = 1;
+  spawnWave();
+}
+
+function pauseGame() {
+  if (gs !== GameState.PLAYING) return;
+  gs = GameState.PAUSED;
+  showOverlay('pause');
+}
+
+function resumeGame() {
+  if (gs !== GameState.PAUSED) return;
+  gs = GameState.PLAYING;
+  showOverlay(null);
+  Sound.click();
+}
+
+function endGame() {
+  gs = GameState.GAME_OVER;
+  if (score > hiScore) hiScore = score;
+  document.getElementById('go-score').textContent  = 'SCORE  ' + score;
+  document.getElementById('go-hi').innerHTML       = 'HI &nbsp;<b>' + hiScore + '</b>';
+  showOverlay('gameover');
+  Sound.lose();
+}
+
+function returnToMenu() {
+  gs = GameState.MENU;
+  document.getElementById('menu-hi').innerHTML = 'HI &nbsp;<b>' + hiScore + '</b>';
+  showOverlay('menu');
+}
+
+function showOverlay(id) {
+  ['menu','pause','gameover'].forEach(n => {
+    document.getElementById(n).classList.toggle('hidden', n !== id);
+  });
+}
+
+// ===== UPDATE =====
+function update(dt) {
+  // Player aim angle toward mouse
+  const dx = mouse.x - player.x;
+  const dy = mouse.y - player.y;
+  player.angle = Math.atan2(dy, dx);
+
+  // Thrust
+  const thrustX = (keys['KeyW'] || keys['ArrowUp'])    ? 1 : 0;
+  const thrustD = (keys['KeyS'] || keys['ArrowDown'])   ? 1 : 0;
+  const thrustL = (keys['KeyA'] || keys['ArrowLeft'])   ? 1 : 0;
+  const thrustR = (keys['KeyD'] || keys['ArrowRight'])  ? 1 : 0;
+  const ax = (thrustR - thrustL) * CFG.PLAYER_THRUST;
+  const ay = (thrustD - thrustX) * CFG.PLAYER_THRUST;
+
+  if (ax !== 0 || ay !== 0) {
+    player.vx += ax * dt;
+    player.vy += ay * dt;
+    thrustTimer -= dt;
+    if (thrustTimer <= 0) {
+      Sound.thrust();
+      thrustTimer = 0.08;
+    }
+    // Thrust particles
+    if (Math.random() < 0.3) {
+      const ta = player.angle + Math.PI + (Math.random() - 0.5) * 0.5;
+      particles.push({
+        x: player.x - Math.cos(player.angle) * player.r,
+        y: player.y - Math.sin(player.angle) * player.r,
+        vx: Math.cos(ta) * (1 + Math.random() * 2),
+        vy: Math.sin(ta) * (1 + Math.random() * 2),
+        life: 0.6 + Math.random() * 0.4,
+        size: 1 + Math.random() * 2,
+        color: '#00ffcc',
+      });
+    }
+  }
+
+  // Speed cap + friction
+  const spd = Math.hypot(player.vx, player.vy);
+  if (spd > CFG.PLAYER_MAX_SPEED) {
+    player.vx = player.vx / spd * CFG.PLAYER_MAX_SPEED;
+    player.vy = player.vy / spd * CFG.PLAYER_MAX_SPEED;
+  }
+  player.vx *= CFG.PLAYER_FRICTION;
+  player.vy *= CFG.PLAYER_FRICTION;
+
+  player.x += player.vx * dt;
+  player.y += player.vy * dt;
+  player.x = ((player.x % W) + W) % W;
+  player.y = ((player.y % H) + H) % H;
+
+  player.invul = Math.max(0, player.invul - dt);
+
+  // Lasso mechanic
+  updateLasso(dt);
+
+  // Asteroids (skip lasso target — position handled entirely in updateLasso)
+  for (const a of asteroids) {
+    if (a === player.lassoTarget) continue;
+    a.x  += a.vx * dt;
+    a.y  += a.vy * dt;
+    a.angle += a.spin * dt;
+    a.x = ((a.x % W) + W) % W;
+    a.y = ((a.y % H) + H) % H;
+  }
+
+  // Enemies: seek player
+  for (const e of enemies) {
+    const edx = player.x - e.x;
+    const edy = player.y - e.y;
+    const ed  = Math.hypot(edx, edy) || 1;
+    e.vx += (edx / ed) * CFG.ENEMY_SPEED * dt * 4;
+    e.vy += (edy / ed) * CFG.ENEMY_SPEED * dt * 4;
+    // clamp speed
+    const ev = Math.hypot(e.vx, e.vy);
+    if (ev > CFG.ENEMY_SPEED) { e.vx = e.vx / ev * CFG.ENEMY_SPEED; e.vy = e.vy / ev * CFG.ENEMY_SPEED; }
+    e.x += e.vx * dt;
+    e.y += e.vy * dt;
+    e.x = ((e.x % W) + W) % W;
+    e.y = ((e.y % H) + H) % H;
+  }
+
+  // Collisions
+  updateCollisions();
+
+  // Particles
+  for (const p of particles) {
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.93; p.vy *= 0.93;
+    p.life -= dt * 1.8;
+  }
+  for (let i = particles.length - 1; i >= 0; i--) {
+    if (particles[i].life <= 0) particles.splice(i, 1);
+  }
+
+  // Score popups
+  for (const sp of scorePopups) { sp.y -= 40 * dt; sp.life -= dt; }
+  for (let i = scorePopups.length - 1; i >= 0; i--) {
+    if (scorePopups[i].life <= 0) scorePopups.splice(i, 1);
+  }
+
+  // Screen shake decay
+  shake *= CFG.SHAKE_DECAY;
+  if (shake < 0.1) shake = 0;
+
+  // Wave banner countdown
+  if (waveBanner > 0) waveBanner -= dt;
+
+  // Next wave
+  if (waveTimer > 0) {
+    waveTimer -= dt;
+    if (waveTimer <= 0) {
+      wave++;
+      spawnWave();
+    }
+  } else if (asteroids.length === 0 && enemies.length === 0 && gs === GameState.PLAYING) {
+    waveTimer = CFG.WAVE_PAUSE;
+  }
+}
+
+function updateLasso(dt) {
+  const held = keys['Space'];
+
+  if (held) {
+    if (!player.lassoTarget || !asteroids.includes(player.lassoTarget)) {
+      // Find nearest asteroid in range (not already grabbed)
+      let best = null, bestD = CFG.LASSO_RANGE;
+      for (const a of asteroids) {
+        const d = Math.hypot(a.x - player.x, a.y - player.y);
+        if (d < bestD) { bestD = d; best = a; }
+      }
+      player.lassoTarget  = best;
+      player.lassoGrabbed = false;
+      player.lassoActive  = !!best;
+    }
+
+    if (player.lassoTarget) {
+      player.lassoActive = true;
+      const t  = player.lassoTarget;
+      const tdx = player.x - t.x;
+      const tdy = player.y - t.y;
+      const td  = Math.hypot(tdx, tdy);
+
+      if (td < CFG.LASSO_ORBIT_R) {
+        // Asteroid close enough → orbit around player, aimed at mouse
+        player.lassoGrabbed = true;
+        const aimA = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+        // Place asteroid on the opposite side (between player and mouse)
+        t.x = player.x + Math.cos(aimA) * CFG.LASSO_ORBIT_R;
+        t.y = player.y + Math.sin(aimA) * CFG.LASSO_ORBIT_R;
+        t.vx = player.vx;
+        t.vy = player.vy;
+      } else {
+        // Pull toward player
+        player.lassoGrabbed = false;
+        const pullA  = Math.atan2(tdx, tdy);
+        const pullF  = CFG.LASSO_PULL;
+        t.vx += (tdx / td) * pullF * dt;
+        t.vy += (tdy / td) * pullF * dt;
+        // Move pulled asteroid
+        t.x  += t.vx * dt;
+        t.y  += t.vy * dt;
+      }
+    }
+  } else {
+    // Release — fling
+    if (player.lassoActive && player.lassoTarget && asteroids.includes(player.lassoTarget)) {
+      const t   = player.lassoTarget;
+      const aimA = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+      t.vx   = Math.cos(aimA) * CFG.LASSO_FLING;
+      t.vy   = Math.sin(aimA) * CFG.LASSO_FLING;
+      t.flung = true;
+      Sound.fling();
+    }
+    player.lassoTarget  = null;
+    player.lassoActive  = false;
+    player.lassoGrabbed = false;
+  }
+}
+
+function updateCollisions() {
+  // Asteroid–Asteroid (flung rocks destroy other rocks)
+  for (let i = asteroids.length - 1; i >= 0; i--) {
+    const a = asteroids[i];
+    if (!a.flung) continue;  // only flung asteroids deal damage to others
+    for (let j = asteroids.length - 1; j >= 0; j--) {
+      if (i === j) continue;
+      const b = asteroids[j];
+      if (b === player.lassoTarget) continue;
+      if (circleOverlap(a, b)) {
+        // Both shatter
+        const pts = scoreAsteroid(b);
+        destroyAsteroid(b, j);
+        spawnBurst(b.x, b.y, '#cc9955', 14, 1.2);
+        shake = Math.max(shake, 6);
+        score += pts;
+        scorePopups.push({ x: b.x, y: b.y, text: '+' + pts, life: 1.0 });
+        combo++;
+        Sound['boom' + CFG.AST_SIZES[b.tier].boom.charAt(0).toUpperCase() + CFG.AST_SIZES[b.tier].boom.slice(1)]();
+        // Destroy the flung rock too (but only if it's not the grabbed one)
+        if (asteroids.includes(a)) {
+          const aPts = scoreAsteroid(a);
+          const ai   = asteroids.indexOf(a);
+          destroyAsteroid(a, ai);
+          spawnBurst(a.x, a.y, '#cc9955', 10, 1.0);
+          score += aPts;
+          scorePopups.push({ x: a.x + 10, y: a.y - 10, text: '+' + aPts, life: 1.0 });
+          Sound['boom' + CFG.AST_SIZES[a.tier].boom.charAt(0).toUpperCase() + CFG.AST_SIZES[a.tier].boom.slice(1)]();
+        }
+        if (combo >= 3) Sound.combo();
+        break;
+      }
+    }
+  }
+
+  // Flung asteroid–Enemy
+  for (let ai = asteroids.length - 1; ai >= 0; ai--) {
+    const a = asteroids[ai];
+    if (!a.flung) continue;
+    for (let ei = enemies.length - 1; ei >= 0; ei--) {
+      const e = enemies[ei];
+      if (circleOverlap(a, e)) {
+        const pts = CFG.ENEMY_SCORE * mult();
+        score += pts;
+        combo++;
+        scorePopups.push({ x: e.x, y: e.y, text: '+' + pts, life: 1.0 });
+        spawnBurst(e.x, e.y, '#ff6644', 16, 1.4);
+        enemies.splice(ei, 1);
+        shake = Math.max(shake, 8);
+        Sound.enemyDie();
+        // also destroy the asteroid
+        if (asteroids.includes(a)) {
+          const aPts = scoreAsteroid(a);
+          const aIdx = asteroids.indexOf(a);
+          destroyAsteroid(a, aIdx);
+          spawnBurst(a.x, a.y, '#cc9955', 8, 0.8);
+          score += aPts;
+        }
+        if (combo >= 3) Sound.combo();
+        break;
+      }
+    }
+  }
+
+  // Player–Asteroid (skip lasso target entirely — it's "in hand")
+  if (player.invul <= 0) {
+    for (let i = asteroids.length - 1; i >= 0; i--) {
+      const a = asteroids[i];
+      if (a === player.lassoTarget) continue;
+      if (circleOverlap({ x: player.x, y: player.y, r: CFG.PLAYER_RADIUS }, a)) {
+        hitPlayer(player.x, player.y);
+        break;
+      }
+    }
+  }
+
+  // Player–Enemy
+  if (player.invul <= 0) {
+    for (const e of enemies) {
+      if (circleOverlap({ x: player.x, y: player.y, r: CFG.PLAYER_RADIUS }, e)) {
+        hitPlayer(player.x, player.y);
+        break;
+      }
+    }
+  }
+}
+
+function circleOverlap(a, b) {
+  const dx = a.x - b.x, dy = a.y - b.y;
+  const minD = a.r + b.r;
+  return dx * dx + dy * dy < minD * minD;
+}
+
+function mult() { return CFG.COMBO_MULT[Math.min(combo, CFG.COMBO_MULT.length - 1)]; }
+
+function scoreAsteroid(a) {
+  return CFG.AST_SIZES[a.tier].scoreBase * mult();
+}
+
+function destroyAsteroid(a, idx) {
+  asteroids.splice(idx, 1);
+  if (player.lassoTarget === a) {
+    player.lassoTarget  = null;
+    player.lassoActive  = false;
+    player.lassoGrabbed = false;
+  }
+  // Split large/medium
+  if (a.tier < 2) {
+    for (let k = 0; k < 2; k++) {
+      const na = makeAsteroid(a.x, a.y, a.tier + 1);
+      asteroids.push(na);
+    }
+  }
+}
+
+function hitPlayer(x, y) {
+  lives--;
+  combo = 0;
+  player.invul = CFG.PLAYER_INVUL;
+  // Release lasso
+  player.lassoTarget  = null;
+  player.lassoActive  = false;
+  player.lassoGrabbed = false;
+  spawnBurst(x, y, '#00ffcc', 20, 1.8);
+  shake = Math.max(shake, 14);
+  Sound.playerHit();
+  if (lives <= 0) endGame();
+}
+
+// ===== RENDER =====
+function render() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  ctx.fillStyle = '#07080f';
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  for (const s of stars) {
+    ctx.globalAlpha = s.bright;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Screen shake
+  const sx = shake > 0 ? (Math.random() - 0.5) * shake * 2 : 0;
+  const sy = shake > 0 ? (Math.random() - 0.5) * shake * 2 : 0;
+  ctx.save();
+  ctx.translate(sx, sy);
+
+  // Asteroids
+  for (const a of asteroids) {
+    drawAsteroid(a);
+  }
+
+  // Enemies
+  for (const e of enemies) {
+    drawEnemy(e);
+  }
+
+  // Lasso beam
+  if (gs === GameState.PLAYING && player.lassoActive && player.lassoTarget) {
+    const t = player.lassoTarget;
+    const grad = ctx.createLinearGradient(player.x, player.y, t.x, t.y);
+    grad.addColorStop(0, 'rgba(0,255,204,0.9)');
+    grad.addColorStop(1, 'rgba(0,255,204,0.1)');
+    ctx.beginPath();
+    ctx.moveTo(player.x, player.y);
+    ctx.lineTo(t.x, t.y);
+    ctx.strokeStyle = grad;
+    ctx.lineWidth   = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineWidth = 1;
+  }
+
+  // Player ship
+  if (gs === GameState.PLAYING || gs === GameState.PAUSED) {
+    drawPlayer();
+  }
+
+  // Particles
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle   = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Score popups
+  for (const sp of scorePopups) {
+    ctx.globalAlpha = Math.max(0, sp.life);
+    ctx.fillStyle   = '#ffd34d';
+    ctx.font        = 'bold 14px ui-monospace, monospace';
+    ctx.textAlign   = 'center';
+    ctx.fillText(sp.text, sp.x, sp.y);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+
+  // HUD (not affected by shake)
+  if (gs === GameState.PLAYING || gs === GameState.PAUSED) {
+    drawHUD();
+  }
+
+  // Wave banner
+  if (waveBanner > 0 && (gs === GameState.PLAYING || gs === GameState.PAUSED)) {
+    const alpha = Math.min(1, waveBanner) * Math.min(1, 2.2 - (2.2 - waveBanner + 0.1));
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.fillStyle   = '#00ffcc';
+    ctx.font        = `bold ${Math.floor(W * 0.07)}px ui-monospace, monospace`;
+    ctx.textAlign   = 'center';
+    ctx.fillText('WAVE ' + wave, W / 2, H / 2);
+    // "CLEAR!" between waves
+    if (waveTimer > 0 && asteroids.length === 0 && enemies.length === 0) {
+      ctx.font      = `bold ${Math.floor(W * 0.04)}px ui-monospace, monospace`;
+      ctx.fillStyle = '#ffd34d';
+      ctx.fillText('CLEAR!', W / 2, H / 2 + Math.floor(W * 0.08));
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawPlayer() {
+  const { x, y, angle, invul } = player;
+  const r = CFG.PLAYER_RADIUS;
+
+  // Invulnerability flash
+  if (invul > 0 && Math.floor(invul * 8) % 2 === 0) return;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  // Glow
+  ctx.shadowColor = '#00ffcc';
+  ctx.shadowBlur  = 12;
+
+  ctx.beginPath();
+  ctx.moveTo(r * 1.3, 0);
+  ctx.lineTo(-r * 0.8, -r * 0.8);
+  ctx.lineTo(-r * 0.5,  0);
+  ctx.lineTo(-r * 0.8,  r * 0.8);
+  ctx.closePath();
+  ctx.fillStyle   = '#00ffcc';
+  ctx.strokeStyle = '#aafff0';
+  ctx.lineWidth   = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawAsteroid(a) {
+  ctx.save();
+  ctx.translate(a.x, a.y);
+  ctx.rotate(a.angle);
+
+  const col = ['#aa7744','#bb8855','#cc9966'][a.tier];
+  const hl  = ['#cc9966','#ddaa77','#eebb88'][a.tier];
+
+  ctx.beginPath();
+  // Slightly irregular polygon for the asteroid shape
+  const sides = 8 + a.tier;
+  for (let i = 0; i < sides; i++) {
+    const ang = (i / sides) * Math.PI * 2;
+    // Use seeded variation based on crater positions
+    const vary = 0.82 + (a.craters[i % a.craters.length]?.r / 60 || 0.1) * 0.36;
+    const rx   = Math.cos(ang) * a.r * vary;
+    const ry   = Math.sin(ang) * a.r * vary;
+    i === 0 ? ctx.moveTo(rx, ry) : ctx.lineTo(rx, ry);
+  }
+  ctx.closePath();
+  ctx.fillStyle   = col;
+  ctx.strokeStyle = hl;
+  ctx.lineWidth   = 1.5;
+  ctx.fill();
+  ctx.stroke();
+
+  // Craters
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  for (const c of a.craters) {
+    const cx = Math.cos(c.a) * c.d;
+    const cy = Math.sin(c.a) * c.d;
+    ctx.beginPath();
+    ctx.arc(cx, cy, c.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Flung glow
+  if (a.flung) {
+    ctx.shadowColor = '#ffcc00';
+    ctx.shadowBlur  = 20;
+    ctx.strokeStyle = 'rgba(255,200,0,0.6)';
+    ctx.lineWidth   = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, a.r + 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  ctx.save();
+  ctx.translate(e.x, e.y);
+
+  // Direction toward player
+  const ea = Math.atan2(player.y - e.y, player.x - e.x);
+  ctx.rotate(ea);
+
+  ctx.shadowColor = '#ff4444';
+  ctx.shadowBlur  = 10;
+
+  // Diamond / arrow shape
+  const r = e.r;
+  ctx.beginPath();
+  ctx.moveTo( r * 1.4, 0);
+  ctx.lineTo( 0,       -r);
+  ctx.lineTo(-r * 0.6,  0);
+  ctx.lineTo( 0,        r);
+  ctx.closePath();
+  ctx.fillStyle   = '#cc2222';
+  ctx.strokeStyle = '#ff6666';
+  ctx.lineWidth   = 1.5;
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawHUD() {
+  ctx.textAlign = 'left';
+  ctx.font      = 'bold 18px ui-monospace, monospace';
+
+  // Score
+  ctx.fillStyle = '#d8f0ff';
+  ctx.fillText('SCORE  ' + score, 16, 30);
+
+  // Hi score
+  ctx.fillStyle = '#6a7a99';
+  ctx.font      = '13px ui-monospace, monospace';
+  ctx.fillText('HI  ' + hiScore, 16, 50);
+
+  // Lives
+  const lifeR = 7;
+  for (let i = 0; i < 3; i++) {
+    ctx.save();
+    ctx.translate(W - 30 - i * 26, 22);
+    ctx.beginPath();
+    ctx.moveTo(lifeR, 0);
+    ctx.lineTo(-lifeR * 0.6, -lifeR * 0.7);
+    ctx.lineTo(-lifeR * 0.4, 0);
+    ctx.lineTo(-lifeR * 0.6, lifeR * 0.7);
+    ctx.closePath();
+    ctx.fillStyle   = i < lives ? '#00ffcc' : 'rgba(0,255,204,0.15)';
+    ctx.strokeStyle = i < lives ? '#aafff0' : 'rgba(0,255,204,0.3)';
+    ctx.lineWidth   = 1;
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+
+  // Wave
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#6a7a99';
+  ctx.font      = '13px ui-monospace, monospace';
+  ctx.fillText('WAVE ' + wave, W - 16, 50);
+
+  // Combo
+  if (combo >= 2) {
+    const cm = mult();
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = combo >= 6 ? '#ffd34d' : '#00ffcc';
+    ctx.font        = `bold ${14 + Math.min(combo, 8)}px ui-monospace, monospace`;
+    ctx.fillText('COMBO ×' + cm + '  (' + combo + ')', W / 2, 28);
+  }
+
+  // Lasso hint when lasso active
+  if (player && player.lassoActive && player.lassoTarget) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0,255,204,0.6)';
+    ctx.font      = '12px ui-monospace, monospace';
+    ctx.fillText('AIM  •  RELEASE TO FLING', W / 2, H - 16);
+  } else if (gs === GameState.PLAYING && !player.lassoActive) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(100,120,153,0.5)';
+    ctx.font      = '12px ui-monospace, monospace';
+    ctx.fillText('HOLD SPACE TO LASSO', W / 2, H - 16);
+  }
+
+  ctx.textAlign = 'left';
+
+  // Mute indicator
+  if (Sound.muted) {
+    ctx.fillStyle = 'rgba(100,120,153,0.6)';
+    ctx.font      = '11px ui-monospace, monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText('♪ MUTED', W - 16, H - 16);
+    ctx.textAlign = 'left';
+  }
+}
+
+// ===== UI WIRING =====
+function updateMuteLabels() {
+  const label = Sound.muted ? '♪ SOUND OFF' : '♪ SOUND ON';
+  document.getElementById('btn-mute-menu').textContent  = label;
+  document.getElementById('btn-mute-pause').textContent = label;
+}
+
+document.getElementById('btn-play').addEventListener('click', () => {
+  Sound.click(); startGame();
+});
+document.getElementById('btn-resume').addEventListener('click', () => {
+  resumeGame();
+});
+document.getElementById('btn-restart-pause').addEventListener('click', () => {
+  Sound.click(); startGame();
+});
+document.getElementById('btn-menu-pause').addEventListener('click', () => {
+  Sound.click(); returnToMenu();
+});
+document.getElementById('btn-again').addEventListener('click', () => {
+  Sound.click(); startGame();
+});
+document.getElementById('btn-menu-go').addEventListener('click', () => {
+  Sound.click(); returnToMenu();
+});
+document.getElementById('btn-mute-menu').addEventListener('click', () => {
+  Sound.unlock(); Sound.toggleMute(); updateMuteLabels();
+});
+document.getElementById('btn-mute-pause').addEventListener('click', () => {
+  Sound.toggleMute(); updateMuteLabels();
+});
+
+// Enter key to start
+window.addEventListener('keydown', e => {
+  if (e.code === 'Enter') {
+    if (gs === GameState.MENU)      { Sound.click(); startGame(); }
+    else if (gs === GameState.GAME_OVER) { Sound.click(); startGame(); }
+  }
+});
+
+// ===== GAME LOOP =====
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  if (gs === GameState.PLAYING) update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ===== BOOT =====
+initStars();
+showOverlay('menu');
+</script>
+</body>
+</html>
