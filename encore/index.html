@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>ENCORE — fight beside your past lives</title>
+<!--
+  ENCORE — a single-file, self-contained "echo" arena shooter
+  (HTML5 Canvas 2D + Web Audio). Built to the GAME_AGENT.md contract:
+  boots into a main menu, has a pause menu, synthesized SFX, one signature twist.
+
+  GENRE : top-down twin-stick-ish arena shooter
+  TWIST : "Every life is recorded — and replays beside you." Each TAKE you
+          control one live self. The instant you die, that whole run is saved
+          and, from the next take on, it replays from t=0 as an intangible
+          ECHO that moves and fires exactly as you did. Enemies only chase the
+          LIVE you; your echoes can't be touched, so they pour uninterrupted
+          fire into the CORE. Your damage is front-loaded: early in each take
+          all your past selves overlap. Assemble enough echoes to burst the
+          core in a single take before your takes run out.
+  CONTROLS: WASD / Arrows = move.  Mouse = aim, hold / click = shoot.
+            Esc / P = pause.  M = mute.   (Touch: left-half drag = move,
+            right-half = auto-aim & fire.)
+  GOAL : destroy the CORE (resets each take) before you burn all 7 takes.
+         Score = damage dealt + 25 per sentry. High score kept in memory.
+
+  Assumptions (request was generic): 2D, procedural art + synthesized SFX,
+  a clear win (core destroyed) and lose (takes exhausted). No assets, no build.
+-->
+<style>
+  :root{
+    --bg:#080610; --ink:#f3ecff; --dim:#8a7fb0; --accent:#ff6b6b;
+    --echo:#7ad0ff; --core:#ffd34d; --danger:#ff3b5c; --ok:#5bff9b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    -webkit-user-select:none; user-select:none; touch-action:none;
+  }
+  #game{position:fixed; inset:0; display:block; cursor:crosshair;
+    background:radial-gradient(1100px 700px at 50% 42%, #140e22 0%, #080610 70%);}
+
+  /* ===== overlays ===== */
+  .overlay{
+    position:absolute; inset:0; z-index:10;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:6vh 6vw;
+    background:radial-gradient(900px 600px at 50% 40%, rgba(255,107,107,0.10), transparent 60%), rgba(8,6,16,0.82);
+    backdrop-filter:blur(2px);
+    transition:opacity .28s ease, transform .28s ease;
+  }
+  .overlay.hidden{opacity:0; pointer-events:none; transform:scale(1.02)}
+
+  .title{
+    font-size:clamp(48px,13vw,128px); font-weight:800; letter-spacing:0.07em; line-height:0.9;
+    background:linear-gradient(110deg,#ffd9b0,var(--accent) 45%,var(--echo));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    text-shadow:0 0 50px rgba(255,107,107,0.25);
+  }
+  .tag{margin-top:14px;color:var(--echo);font-size:clamp(13px,2.6vw,18px);max-width:640px}
+  .tag b{color:var(--ink)}
+  .sub{margin-top:6px;color:var(--dim);font-size:clamp(12px,2.2vw,15px);max-width:600px;line-height:1.7}
+
+  .btn{
+    margin-top:8px; cursor:pointer; border:none;
+    font-family:inherit; font-weight:800; letter-spacing:0.05em;
+    font-size:clamp(17px,3.4vw,22px); color:#1a0d12;
+    background:linear-gradient(180deg,#ff9a8b,var(--accent));
+    padding:14px 40px; border-radius:14px;
+    box-shadow:0 10px 30px rgba(255,107,107,0.35), inset 0 1px 0 rgba(255,255,255,0.4);
+    transition:transform .12s ease, box-shadow .12s ease, filter .12s ease;
+  }
+  .btn:hover{transform:translateY(-2px); filter:brightness(1.06);
+    box-shadow:0 16px 40px rgba(255,107,107,0.45), inset 0 1px 0 rgba(255,255,255,0.4)}
+  .btn:active{transform:translateY(0)}
+  .btn.ghost{
+    background:transparent; color:var(--echo);
+    border:1.5px solid rgba(122,208,255,0.5);
+    box-shadow:none; font-size:clamp(14px,2.6vw,16px); padding:11px 26px;
+  }
+  .btn.ghost:hover{background:rgba(122,208,255,0.10); filter:none}
+  .row{display:flex; gap:14px; flex-wrap:wrap; align-items:center; justify-content:center; margin-top:26px}
+
+  .controls{
+    margin-top:30px; color:var(--dim); font-size:clamp(12px,2.2vw,14px);
+    line-height:2; max-width:560px;
+  }
+  .controls b{color:var(--ink)}
+  .controls kbd{
+    display:inline-block; background:#1d1730; border:1px solid #3a2f55; border-radius:6px;
+    padding:1px 8px; color:#d8ccff; font-size:0.92em; margin:0 1px;
+  }
+  .bigstat{font-size:clamp(30px,8vw,66px); font-weight:800; margin-top:6px; letter-spacing:0.04em}
+  .win .bigstat{color:var(--ok)} .lose .bigstat{color:var(--danger)}
+  .statline{color:var(--dim); margin-top:8px; font-size:clamp(13px,2.4vw,16px)}
+  .statline b{color:var(--ink)}
+
+  .mutebtn{
+    position:absolute; top:14px; right:16px; z-index:11;
+    background:rgba(20,14,34,0.7); border:1px solid #3a2f55; color:var(--ink);
+    font-family:inherit; font-size:13px; padding:8px 12px; border-radius:10px; cursor:pointer;
+  }
+  .mutebtn:hover{border-color:var(--accent)}
+  .hint{position:absolute; bottom:14px; left:0; right:0; text-align:center; color:var(--dim);
+    font-size:12px; z-index:5; pointer-events:none}
+</style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <button id="mute" class="mutebtn" title="Mute (M)">♪ SOUND</button>
+
+  <!-- ===== MAIN MENU ===== -->
+  <div id="menu" class="overlay">
+    <div class="title">ENCORE</div>
+    <div class="tag">Twist — <b>every life replays beside you.</b> Die, and your whole run returns as an unkillable <b>echo</b> that fires alongside your next self.</div>
+    <div class="sub">Enemies only chase the <i>live</i> you. Stack enough past selves to burst the CORE in a single take — before your 7 takes run out.</div>
+    <button id="play" class="btn">▶ PLAY</button>
+    <div class="controls">
+      <b>Move</b> <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows &nbsp;·&nbsp; <b>Aim</b> mouse &nbsp;·&nbsp; <b>Fire</b> hold click<br>
+      <b>Pause</b> <kbd>Esc</kbd>/<kbd>P</kbd> &nbsp;·&nbsp; <b>Mute</b> <kbd>M</kbd><br>
+      <span style="color:#6f6690">Touch: left-half = move · right-half = auto-aim &amp; fire</span>
+    </div>
+  </div>
+
+  <!-- ===== PAUSE ===== -->
+  <div id="pause" class="overlay hidden">
+    <div class="title" style="font-size:clamp(34px,9vw,74px)">PAUSED</div>
+    <div class="sub" id="pauseInfo"></div>
+    <div class="row">
+      <button id="resume" class="btn">RESUME</button>
+      <button id="restart" class="btn ghost">RESTART</button>
+      <button id="quit" class="btn ghost">QUIT TO MENU</button>
+    </div>
+    <div class="controls"><b>Aim</b> mouse · <b>Fire</b> hold click · enemies chase the live you; echoes are untouchable.</div>
+  </div>
+
+  <!-- ===== GAME OVER ===== -->
+  <div id="over" class="overlay hidden lose">
+    <div class="title" style="font-size:clamp(30px,8vw,64px)">OUT OF TAKES</div>
+    <div class="bigstat" id="overScore">0</div>
+    <div class="statline" id="overSub"></div>
+    <div class="row">
+      <button id="again" class="btn">PLAY AGAIN</button>
+      <button id="overMenu" class="btn ghost">MAIN MENU</button>
+    </div>
+  </div>
+
+  <!-- ===== WIN ===== -->
+  <div id="win" class="overlay hidden win">
+    <div class="title" style="font-size:clamp(34px,9vw,76px);background:linear-gradient(110deg,#bfffd9,var(--ok) 50%,var(--echo));-webkit-background-clip:text;background-clip:text;color:transparent">CORE BREACHED</div>
+    <div class="bigstat" id="winScore">0</div>
+    <div class="statline" id="winSub"></div>
+    <div class="row">
+      <button id="winAgain" class="btn">PLAY AGAIN</button>
+      <button id="winMenu" class="btn ghost">MAIN MENU</button>
+    </div>
+  </div>
+
+  <div class="hint" id="hint"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   ENCORE — single file. Sections: CONFIG · STATE · AUDIO · INPUT ·
+   RECORD/ECHO · SPAWN · UPDATE · RENDER · UI · LOOP · BOOT
+   ===================================================================== */
+
+// ===== CONFIG =====
+const CFG = {
+  maxTakes:      7,        // total lives; echoes = takes already spent
+  takeLimit:     28,       // seconds — a take auto-ends if you never die
+  intro:         1.2,      // seconds at take start: no spawns / no core fire
+
+  coreR:         48,
+  coreHP:        900,      // resets every take; echoes stack to burst it
+  coreFireBase:  1.7,      // seconds between core volleys (shrinks per round)
+  coreBulletSpd: 175,
+
+  playerR:       12,
+  playerSpd:     268,
+  fireCd:        0.13,     // seconds between player/echo shots
+  bulletSpd:     560,
+  bulletDmg:     7,
+  bulletR:       4,
+
+  sentryR:       13,
+  sentryHpBase:  16,
+  sentrySpdBase: 92,
+  sentryCap:     14,
+  spawnBase:     1.5,      // seconds between sentry spawns (shrinks per round)
+};
+
+// ===== STATE =====
+const GameState = { MENU:'MENU', PLAYING:'PLAYING', PAUSED:'PAUSED', GAME_OVER:'GAME_OVER', WIN:'WIN' };
+let state = GameState.MENU;
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0;                       // CSS-pixel size of the canvas
+
+// run-scoped state
+let G = null;                           // current game; (re)built by newGame()
+let highScore = 0;
+
+function newGame(){
+  G = {
+    takesUsed: 0,                       // completed takes (== number of echoes)
+    round: 1,                           // takesUsed + 1
+    score: 0,
+    echoes: [],                         // completed recordings
+    // per-take (filled by startTake)
+    roundTime: 0,
+    phase: 'intro',                     // 'intro' | 'active'
+    rec: null,                          // recording-in-progress
+    player: null,
+    sentries: [],
+    bullets: [],
+    particles: [],
+    pops: [],                           // floating score text
+    core: null,
+    spawnT: 0,
+    coreFireT: 0,
+    shake: 0,
+    flash: 0,                           // red vignette pulse on death
+    banner: { text:'', t:0 },
+  };
+}
+
+// ===== AUDIO ===== (synth SFX, zero files)
+const Sound = (() => {
+  let actx, muted = false;
+  const ensure = () => { if (!actx) actx = new (window.AudioContext||window.webkitAudioContext)(); };
+  const unlock = () => { ensure(); if (actx.state === 'suspended') actx.resume(); };
+
+  function tone({ freq=440, dur=0.12, type='square', vol=0.2, slide=0, delay=0 }){
+    if (muted) return; ensure();
+    const t0 = actx.currentTime + delay;
+    const osc = actx.createOscillator(), gain = actx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freq+slide), t0+dur);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(vol, t0+0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+    osc.connect(gain).connect(actx.destination);
+    osc.start(t0); osc.stop(t0+dur+0.02);
+  }
+  function noise({ dur=0.2, vol=0.25, delay=0 }){
+    if (muted) return; ensure();
+    const t0 = actx.currentTime + delay;
+    const n = Math.floor(actx.sampleRate*dur);
+    const buf = actx.createBuffer(1, n, actx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i=0;i<n;i++) d[i] = (Math.random()*2-1)*(1-i/n);
+    const src = actx.createBufferSource(); src.buffer = buf;
+    const g = actx.createGain(); g.gain.value = vol;
+    src.connect(g).connect(actx.destination); src.start(t0);
+  }
+
+  return {
+    unlock,
+    shoot:  () => tone({ freq:560, dur:0.07, type:'square',   vol:0.07, slide:-260 }),
+    echoSh: () => tone({ freq:760, dur:0.06, type:'triangle', vol:0.035, slide:-300 }),
+    hit:    () => tone({ freq:300, dur:0.06, type:'square',   vol:0.08, slide:-140 }),
+    coreHit:() => tone({ freq:180, dur:0.07, type:'sawtooth', vol:0.10, slide:60 }),
+    kill:   () => { tone({ freq:420, dur:0.09, type:'triangle', vol:0.12, slide:240 }); noise({ dur:0.10, vol:0.10 }); },
+    death:  () => { tone({ freq:140, dur:0.5, type:'sawtooth', vol:0.22, slide:-90 }); noise({ dur:0.35, vol:0.20 }); },
+    spawnEcho:()=> { tone({ freq:300, dur:0.18, type:'sine', vol:0.16, slide:520 }); tone({ freq:600, dur:0.2, type:'triangle', vol:0.1, slide:300, delay:0.06 }); },
+    volley: () => tone({ freq:90, dur:0.16, type:'sawtooth', vol:0.10, slide:-30 }),
+    click:  () => tone({ freq:480, dur:0.05, type:'square', vol:0.10 }),
+    win:    () => { [0,0.12,0.24,0.42].forEach((d,i)=>tone({ freq:[523,659,784,1046][i], dur:0.3, type:'triangle', vol:0.2, delay:d })); },
+    lose:   () => { tone({ freq:200, dur:0.7, type:'sawtooth', vol:0.22, slide:-150 }); noise({ dur:0.5, vol:0.18 }); },
+    toggleMute: () => (muted = !muted),
+    get muted(){ return muted; },
+  };
+})();
+
+// ===== INPUT =====
+const keys = {};
+const mouse = { x: 0, y: 0, down: false, has: false };
+const touch = { move: null, fire: null };   // {id,x,y,ox,oy} per zone
+
+addEventListener('keydown', (e) => {
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+  if (e.repeat) return;
+  keys[e.code] = true;
+  if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
+  if (e.code === 'KeyM') toggleMute();
+});
+addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+canvas.addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.has = true; });
+canvas.addEventListener('mousedown', (e) => { if (e.button===0){ mouse.down = true; Sound.unlock(); } });
+addEventListener('mouseup',   (e) => { if (e.button===0) mouse.down = false; });
+
+// touch: left half = virtual move stick, right half = aim+fire zone
+canvas.addEventListener('touchstart', onTouch, { passive:false });
+canvas.addEventListener('touchmove',  onTouch, { passive:false });
+canvas.addEventListener('touchend',   onTouchEnd, { passive:false });
+canvas.addEventListener('touchcancel',onTouchEnd, { passive:false });
+function onTouch(e){
+  e.preventDefault(); Sound.unlock();
+  for (const t of e.changedTouches){
+    const left = t.clientX < W/2;
+    const zone = left ? 'move' : 'fire';
+    if (!touch[zone]) touch[zone] = { id:t.identifier, ox:t.clientX, oy:t.clientY, x:t.clientX, y:t.clientY };
+  }
+  for (const z of ['move','fire']){
+    if (!touch[z]) continue;
+    for (const t of e.touches) if (t.identifier === touch[z].id){ touch[z].x = t.clientX; touch[z].y = t.clientY; }
+  }
+}
+function onTouchEnd(e){
+  e.preventDefault();
+  for (const t of e.changedTouches)
+    for (const z of ['move','fire']) if (touch[z] && touch[z].id === t.identifier) touch[z] = null;
+}
+
+// ===== RECORD / ECHO =====
+// A recording: { frames:[{t,x,y,a}], shots:[{t,x,y,a}], duration }
+function newRecording(){ return { frames: [], shots: [], duration: 0 }; }
+
+// sample an echo's position at round time rt (advances its frame pointer)
+function echoPos(echo, rt){
+  const f = echo.frames; if (!f.length) return null;
+  let i = echo._i || 0;
+  while (i < f.length-1 && f[i+1].t <= rt) i++;
+  echo._i = i;
+  const a = f[i], b = f[Math.min(i+1, f.length-1)];
+  if (a === b || b.t <= a.t) return { x:a.x, y:a.y, a:a.a };
+  const k = Math.max(0, Math.min(1, (rt - a.t)/(b.t - a.t)));
+  return { x:a.x + (b.x-a.x)*k, y:a.y + (b.y-a.y)*k, a:a.a };
+}
+
+// ===== HELPERS =====
+const rand = (a,b) => a + Math.random()*(b-a);
+const TAU = Math.PI*2;
+function dist2(ax,ay,bx,by){ const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; }
+function clamp(v,a,b){ return v<a?a:v>b?b:v; }
+
+function spawnBurst(x, y, color, count, spd=3){
+  const ps = G.particles;
+  for (let i=0;i<count;i++){
+    const a = rand(0,TAU), s = rand(0.4,1)*spd;
+    ps.push({ x, y, vx:Math.cos(a)*s*60, vy:Math.sin(a)*s*60, life:1, max:rand(0.4,0.8), r:rand(1.5,3.5), color });
+  }
+}
+function popText(x, y, text, color){ G.pops.push({ x, y, text, color, life:1 }); }
+
+// ===== TAKE / ROUND CONTROL =====
+function arenaInset(){ return { x:24, y:80, w:W-48, h:H-104 }; }   // play field (top bar reserved)
+
+function startTake(){
+  const ar = arenaInset();
+  G.round = G.takesUsed + 1;
+  G.roundTime = 0;
+  G.phase = 'intro';
+  G.rec = newRecording();
+  G.sentries.length = 0;
+  G.bullets.length = 0;
+  G.particles.length = 0;
+  G.pops.length = 0;
+  G.spawnT = 0;
+  G.coreFireT = 0;
+  G.flash = 0;
+  G.core = { x: ar.x+ar.w/2, y: ar.y+ar.h*0.42, hp: CFG.coreHP, max: CFG.coreHP, flash:0, ang:0 };
+  G.player = { x: ar.x+ar.w/2, y: ar.y+ar.h-70, a:-Math.PI/2, fireCd:0, alive:true, t:0 };
+  // reset echo playback pointers
+  for (const e of G.echoes){ e._i = 0; e._shot = 0; }
+  G.banner = { text: G.round===1 ? 'TAKE 1' : `TAKE ${G.round} · ${G.takesUsed} ECHO${G.takesUsed>1?'ES':''}`, t: CFG.intro };
+  if (G.round > 1) Sound.spawnEcho();
+}
+
+// the live player just died (or the take timed out) — bank the recording
+function endTake(){
+  const p = G.player;
+  G.rec.duration = G.roundTime;
+  // only keep a recording with some substance
+  G.echoes.push(G.rec);
+  G.takesUsed++;
+  if (G.takesUsed >= CFG.maxTakes){ loseGame(); return; }
+  startTake();
+}
+
+function killPlayer(){
+  const p = G.player; if (!p.alive) return;
+  p.alive = false;
+  G.shake = 16; G.flash = 1;
+  spawnBurst(p.x, p.y, '#ff9a8b', 34, 5);
+  Sound.death();
+  // brief delay handled by banner-free immediate transition; bank the take
+  endTake();
+}
+
+function winGame(){
+  state = GameState.WIN;
+  if (G.score > highScore) highScore = G.score;
+  Sound.win();
+  document.getElementById('winScore').textContent = G.score.toLocaleString();
+  document.getElementById('winSub').innerHTML =
+    `core burst on <b>take ${G.round}</b> with <b>${G.takesUsed} echo${G.takesUsed===1?'':'es'}</b> · best <b>${highScore.toLocaleString()}</b>`;
+  show('win');
+}
+function loseGame(){
+  state = GameState.GAME_OVER;
+  if (G.score > highScore) highScore = G.score;
+  Sound.lose();
+  document.getElementById('overScore').textContent = G.score.toLocaleString();
+  const left = Math.max(0, Math.round(G.core ? G.core.hp/G.core.max*100 : 100));
+  document.getElementById('overSub').innerHTML =
+    `core still at <b>${left}%</b> when the last take fell · best <b>${highScore.toLocaleString()}</b>`;
+  show('over');
+}
+
+// ===== SPAWN =====
+function spawnSentry(){
+  if (G.sentries.length >= CFG.sentryCap) return;
+  const ar = arenaInset();
+  // spawn just outside a random edge, drift in
+  const side = Math.floor(rand(0,4));
+  let x,y;
+  if (side===0){ x=rand(ar.x,ar.x+ar.w); y=ar.y-10; }
+  else if (side===1){ x=ar.x+ar.w+10; y=rand(ar.y,ar.y+ar.h); }
+  else if (side===2){ x=rand(ar.x,ar.x+ar.w); y=ar.y+ar.h+10; }
+  else { x=ar.x-10; y=rand(ar.y,ar.y+ar.h); }
+  const hp = CFG.sentryHpBase + G.round*3;
+  G.sentries.push({ x, y, vx:0, vy:0, hp, max:hp, r:CFG.sentryR, flash:0, t:rand(0,TAU) });
+}
+
+function coreVolley(){
+  const c = G.core, ar = arenaInset();
+  const n = 9 + G.round;                 // ring of bullets
+  const base = rand(0,TAU);
+  const spd = CFG.coreBulletSpd + G.round*7;
+  for (let i=0;i<n;i++){
+    const a = base + i/n*TAU;
+    G.bullets.push({ x:c.x, y:c.y, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd, team:'core', r:6, dmg:0, life:6 });
+  }
+  // one aimed shot at the live player (if alive)
+  if (G.player.alive){
+    const a = Math.atan2(G.player.y-c.y, G.player.x-c.x);
+    G.bullets.push({ x:c.x, y:c.y, vx:Math.cos(a)*(spd*1.25), vy:Math.sin(a)*(spd*1.25), team:'core', r:7, dmg:0, life:6 });
+  }
+  Sound.volley();
+}
+
+// fire one bullet from (x,y) toward angle a; team 'live' shots get recorded
+function fireBullet(x, y, a, who){
+  const s = CFG.bulletSpd;
+  G.bullets.push({ x:x+Math.cos(a)*16, y:y+Math.sin(a)*16, vx:Math.cos(a)*s, vy:Math.sin(a)*s,
+                   team:'player', r:CFG.bulletR, dmg:CFG.bulletDmg, life:1.4, echo:(who==='echo') });
+}
+
+// ===== UPDATE =====
+function update(dt){
+  const ar = arenaInset();
+  G.roundTime += dt;
+  if (G.banner.t > 0) G.banner.t -= dt;
+  if (G.phase === 'intro' && G.roundTime >= CFG.intro) G.phase = 'active';
+
+  // ----- live player -----
+  const p = G.player;
+  if (p.alive){
+    p.t += dt;
+    // movement
+    let mx=0, my=0;
+    if (keys['KeyW']||keys['ArrowUp'])    my-=1;
+    if (keys['KeyS']||keys['ArrowDown'])  my+=1;
+    if (keys['KeyA']||keys['ArrowLeft'])  mx-=1;
+    if (keys['KeyD']||keys['ArrowRight']) mx+=1;
+    if (touch.move){ // virtual stick
+      const dx=touch.move.x-touch.move.ox, dy=touch.move.y-touch.move.oy;
+      const m=Math.hypot(dx,dy); if (m>8){ mx+=dx/m; my+=dy/m; }
+    }
+    const ml = Math.hypot(mx,my);
+    if (ml>0){ mx/=ml; my/=ml; }
+    p.x = clamp(p.x + mx*CFG.playerSpd*dt, ar.x+CFG.playerR, ar.x+ar.w-CFG.playerR);
+    p.y = clamp(p.y + my*CFG.playerSpd*dt, ar.y+CFG.playerR, ar.y+ar.h-CFG.playerR);
+  }
+
+  // aim for live player
+  let aimA = p.a, firing = false;
+  if (p.alive){
+    if (touch.fire){
+      // auto-aim: nearest sentry, else the core
+      let best=null, bd=1e9;
+      for (const s of G.sentries){ const d=dist2(p.x,p.y,s.x,s.y); if (d<bd){ bd=d; best=s; } }
+      const tgt = best || G.core;
+      aimA = Math.atan2(tgt.y-p.y, tgt.x-p.x);
+      firing = true;
+    } else if (mouse.has){
+      aimA = Math.atan2(mouse.y-p.y, mouse.x-p.x);
+      firing = mouse.down;
+    }
+    p.a = aimA;
+    p.fireCd -= dt;
+    if (firing && p.fireCd <= 0){
+      p.fireCd = CFG.fireCd;
+      fireBullet(p.x, p.y, p.a, 'live');
+      G.rec.shots.push({ t:G.roundTime, x:p.x, y:p.y, a:p.a });
+      Sound.shoot();
+    }
+    // record a movement frame every update
+    G.rec.frames.push({ t:G.roundTime, x:p.x, y:p.y, a:p.a });
+  }
+
+  // ----- echoes (past takes) -----
+  for (const e of G.echoes){
+    if (G.roundTime > e.duration) continue;        // this echo's run has ended
+    const ps = echoPos(e, G.roundTime);
+    if (ps){ e._x = ps.x; e._y = ps.y; e._a = ps.a; }
+    // fire recorded shots whose time has arrived
+    while (e._shot < e.shots.length && e.shots[e._shot].t <= G.roundTime){
+      const s = e.shots[e._shot++];
+      fireBullet(s.x, s.y, s.a, 'echo');
+      Sound.echoSh();
+    }
+  }
+
+  // ----- spawns + core fire (only after intro) -----
+  if (G.phase === 'active'){
+    const spawnEvery = Math.max(0.45, CFG.spawnBase - G.round*0.09);
+    G.spawnT -= dt;
+    if (G.spawnT <= 0){ spawnSentry(); G.spawnT = spawnEvery; }
+    const fireEvery = Math.max(0.85, CFG.coreFireBase - G.round*0.07);
+    G.coreFireT -= dt;
+    if (G.coreFireT <= 0){ coreVolley(); G.coreFireT = fireEvery; }
+  }
+
+  // ----- sentries chase the LIVE player only -----
+  const spd = CFG.sentrySpdBase + G.round*7;
+  for (const s of G.sentries){
+    s.t += dt; s.flash = Math.max(0, s.flash - dt*4);
+    let tx, ty;
+    if (p.alive){ tx=p.x; ty=p.y; } else { tx=s.x; ty=s.y; }  // freeze if no live target
+    const a = Math.atan2(ty-s.y, tx-s.x);
+    s.x += Math.cos(a)*spd*dt;
+    s.y += Math.sin(a)*spd*dt;
+    // contact kills the live player
+    if (p.alive && dist2(s.x,s.y,p.x,p.y) < (s.r+CFG.playerR)*(s.r+CFG.playerR)){ killPlayer(); }
+  }
+  // contact with the core also kills the live player (don't camp on it)
+  if (p.alive && dist2(p.x,p.y,G.core.x,G.core.y) < (CFG.coreR+CFG.playerR)*(CFG.coreR+CFG.playerR)){ killPlayer(); }
+
+  // ----- bullets -----
+  const c = G.core; c.flash = Math.max(0, c.flash - dt*4); c.ang += dt*0.6;
+  const bs = G.bullets;
+  for (let i=bs.length-1;i>=0;i--){
+    const b = bs[i];
+    b.x += b.vx*dt; b.y += b.vy*dt; b.life -= dt;
+    let dead = b.life<=0 || b.x<ar.x-20||b.x>ar.x+ar.w+20||b.y<ar.y-20||b.y>ar.y+ar.h+20;
+
+    if (!dead && b.team==='player'){
+      // vs core
+      if (dist2(b.x,b.y,c.x,c.y) < (CFG.coreR+b.r)*(CFG.coreR+b.r)){
+        c.hp -= b.dmg; c.flash = 1; G.score += b.dmg;
+        spawnBurst(b.x, b.y, '#ffd34d', 3, 2); Sound.coreHit();
+        dead = true;
+        if (c.hp <= 0){ c.hp=0; coreDestroyed(); return; }
+      } else {
+        // vs sentries
+        for (let j=0;j<G.sentries.length;j++){
+          const s = G.sentries[j];
+          if (dist2(b.x,b.y,s.x,s.y) < (s.r+b.r)*(s.r+b.r)){
+            s.hp -= b.dmg; s.flash = 1; dead = true;
+            spawnBurst(b.x, b.y, b.echo?'#7ad0ff':'#ff9a8b', 3, 2); Sound.hit();
+            if (s.hp <= 0){
+              G.score += 25; popText(s.x, s.y, '+25', '#5bff9b');
+              spawnBurst(s.x, s.y, '#ff6b6b', 14, 4); Sound.kill();
+              G.sentries.splice(j,1);
+            }
+            break;
+          }
+        }
+      }
+    } else if (!dead && b.team==='core' && p.alive){
+      if (dist2(b.x,b.y,p.x,p.y) < (CFG.playerR+b.r)*(CFG.playerR+b.r)){ killPlayer(); dead=true; }
+    }
+    if (dead) bs.splice(i,1);
+  }
+
+  // ----- particles + popups + camera -----
+  for (let i=G.particles.length-1;i>=0;i--){
+    const pt = G.particles[i];
+    pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.vx*=0.92; pt.vy*=0.92;
+    pt.life -= dt/pt.max;
+    if (pt.life<=0) G.particles.splice(i,1);
+  }
+  for (let i=G.pops.length-1;i>=0;i--){
+    const q=G.pops[i]; q.y -= 34*dt; q.life -= dt*0.9; if (q.life<=0) G.pops.splice(i,1);
+  }
+  G.shake *= 0.86; if (G.shake<0.2) G.shake=0;
+  G.flash = Math.max(0, G.flash - dt*1.6);
+
+  // ----- take time limit (prevents stalling) -----
+  if (p.alive && G.roundTime >= CFG.takeLimit){
+    popText(p.x, p.y-24, 'TAKE ENDS', '#ffd34d');
+    endTake();
+  }
+}
+
+function coreDestroyed(){
+  const c = G.core;
+  G.shake = 26;
+  spawnBurst(c.x, c.y, '#ffd34d', 60, 7);
+  spawnBurst(c.x, c.y, '#ff6b6b', 40, 9);
+  winGame();
+}
+
+// ===== RENDER =====
+function render(){
+  ctx.clearRect(0,0,W,H);
+  const ar = arenaInset();
+
+  ctx.save();
+  if (G && G.shake){ ctx.translate((Math.random()-0.5)*G.shake, (Math.random()-0.5)*G.shake); }
+
+  if (G){
+    drawArena(ar);
+    drawCore();
+    // bullets
+    for (const b of G.bullets){
+      if (b.team==='core'){
+        glowDot(b.x, b.y, b.r, '#ff3b5c', 0.9);
+      } else {
+        glowDot(b.x, b.y, b.r, b.echo?'#7ad0ff':'#ffd9b0', 0.95);
+      }
+    }
+    // sentries
+    for (const s of G.sentries) drawSentry(s);
+    // echoes (translucent past selves)
+    for (const e of G.echoes){
+      if (G.roundTime > e.duration || e._x===undefined) continue;
+      drawActor(e._x, e._y, e._a, '#7ad0ff', 0.42, true);
+    }
+    // particles
+    for (const pt of G.particles){
+      ctx.globalAlpha = Math.max(0, pt.life);
+      ctx.fillStyle = pt.color;
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // live player
+    if (G.player && G.player.alive) drawActor(G.player.x, G.player.y, G.player.a, '#ff6b6b', 1, false);
+    // popups
+    for (const q of G.pops){
+      ctx.globalAlpha = Math.max(0, q.life);
+      ctx.fillStyle = q.color; ctx.font = 'bold 16px ui-monospace,monospace';
+      ctx.textAlign='center'; ctx.fillText(q.text, q.x, q.y);
+    }
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+
+  if (G){
+    drawHUD(ar);
+    // death / win red flash vignette
+    if (G.flash>0){
+      const g = ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.2, W/2,H/2,Math.max(W,H)*0.7);
+      g.addColorStop(0,'rgba(255,59,92,0)'); g.addColorStop(1,`rgba(255,59,92,${0.5*G.flash})`);
+      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    }
+    // take banner
+    if (G.banner.t>0 && (state===GameState.PLAYING)){
+      const a = Math.min(1, G.banner.t/0.4) * Math.min(1, (CFG.intro-G.banner.t)/0.2 + 0.3);
+      ctx.globalAlpha = clamp(a,0,1);
+      ctx.fillStyle = '#f3ecff'; ctx.textAlign='center';
+      ctx.font = 'bold 38px ui-monospace,monospace';
+      ctx.fillText(G.banner.text, W/2, ar.y+ar.h*0.30);
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+function drawArena(ar){
+  // floor grid
+  ctx.save();
+  ctx.beginPath(); ctx.rect(ar.x,ar.y,ar.w,ar.h); ctx.clip();
+  ctx.strokeStyle = 'rgba(122,208,255,0.06)'; ctx.lineWidth=1;
+  const step=44;
+  for (let x=ar.x; x<=ar.x+ar.w; x+=step){ ctx.beginPath(); ctx.moveTo(x,ar.y); ctx.lineTo(x,ar.y+ar.h); ctx.stroke(); }
+  for (let y=ar.y; y<=ar.y+ar.h; y+=step){ ctx.beginPath(); ctx.moveTo(ar.x,y); ctx.lineTo(ar.x+ar.w,y); ctx.stroke(); }
+  ctx.restore();
+  // border
+  ctx.strokeStyle = 'rgba(255,107,107,0.5)'; ctx.lineWidth=2;
+  ctx.strokeRect(ar.x,ar.y,ar.w,ar.h);
+}
+
+function drawCore(){
+  const c = G.core;
+  const pct = c.hp/c.max;
+  ctx.save();
+  ctx.translate(c.x,c.y);
+  // glow
+  const g = ctx.createRadialGradient(0,0,4,0,0,CFG.coreR*1.8);
+  g.addColorStop(0, c.flash>0?'rgba(255,255,255,0.9)':'rgba(255,211,77,0.7)');
+  g.addColorStop(1,'rgba(255,211,77,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,CFG.coreR*1.8,0,TAU); ctx.fill();
+  // body
+  ctx.rotate(c.ang);
+  ctx.fillStyle = c.flash>0 ? '#fff' : '#ffcf4d';
+  ctx.beginPath();
+  for (let i=0;i<6;i++){ const a=i/6*TAU; const r=CFG.coreR*(i%2?0.78:1); ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r); }
+  ctx.closePath(); ctx.fill();
+  ctx.rotate(-c.ang);
+  // inner core
+  ctx.fillStyle='#1a0d12'; ctx.beginPath(); ctx.arc(0,0,CFG.coreR*0.42,0,TAU); ctx.fill();
+  ctx.fillStyle='#ff6b6b'; ctx.beginPath(); ctx.arc(0,0,CFG.coreR*0.42*pct+2,0,TAU); ctx.fill();
+  // HP ring
+  ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=5;
+  ctx.beginPath(); ctx.arc(0,0,CFG.coreR+9,0,TAU); ctx.stroke();
+  ctx.strokeStyle = pct>0.5?'#5bff9b':pct>0.25?'#ffd34d':'#ff3b5c';
+  ctx.beginPath(); ctx.arc(0,0,CFG.coreR+9,-Math.PI/2,-Math.PI/2+TAU*pct); ctx.stroke();
+  ctx.restore();
+}
+
+function drawSentry(s){
+  ctx.save(); ctx.translate(s.x,s.y); ctx.rotate(s.t);
+  ctx.fillStyle = s.flash>0 ? '#fff' : '#ff6b6b';
+  ctx.shadowColor='#ff3b5c'; ctx.shadowBlur=10;
+  ctx.beginPath();
+  ctx.moveTo(0,-s.r); ctx.lineTo(s.r,0); ctx.lineTo(0,s.r); ctx.lineTo(-s.r,0); ctx.closePath(); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#1a0d12'; ctx.beginPath(); ctx.arc(0,0,s.r*0.34,0,TAU); ctx.fill();
+  ctx.restore();
+}
+
+function drawActor(x,y,a,color,alpha,isEcho){
+  ctx.save(); ctx.translate(x,y); ctx.globalAlpha=alpha;
+  if (!isEcho){ ctx.shadowColor=color; ctx.shadowBlur=14; }
+  // body
+  ctx.fillStyle=color;
+  ctx.beginPath(); ctx.arc(0,0,CFG.playerR,0,TAU); ctx.fill();
+  ctx.shadowBlur=0;
+  // barrel / facing
+  ctx.rotate(a);
+  ctx.fillStyle = isEcho ? 'rgba(255,255,255,0.6)' : '#fff';
+  ctx.fillRect(CFG.playerR-2, -3, 14, 6);
+  ctx.restore();
+  if (isEcho){ // faint ring so echoes read as ghosts
+    ctx.save(); ctx.globalAlpha=alpha*0.5; ctx.strokeStyle=color; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(x,y,CFG.playerR+3,0,TAU); ctx.stroke(); ctx.restore();
+  }
+}
+
+function glowDot(x,y,r,color,alpha){
+  ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=color;
+  ctx.shadowColor=color; ctx.shadowBlur=8;
+  ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.fill(); ctx.restore();
+}
+
+function drawHUD(ar){
+  ctx.textAlign='left';
+  // core HP bar (top center)
+  const c=G.core, pct=c.hp/c.max;
+  const bw=Math.min(380, W*0.5), bx=W/2-bw/2, by=26, bh=16;
+  ctx.fillStyle='rgba(255,255,255,0.08)'; roundRect(bx,by,bw,bh,8); ctx.fill();
+  ctx.fillStyle = pct>0.5?'#5bff9b':pct>0.25?'#ffd34d':'#ff3b5c';
+  roundRect(bx,by,bw*pct,bh,8); ctx.fill();
+  ctx.fillStyle='#f3ecff'; ctx.font='bold 11px ui-monospace,monospace'; ctx.textAlign='center';
+  ctx.fillText('CORE  '+Math.ceil(c.hp), W/2, by+bh-4);
+
+  // score (top-left)
+  ctx.textAlign='left'; ctx.fillStyle='#f3ecff'; ctx.font='bold 18px ui-monospace,monospace';
+  ctx.fillText(G.score.toLocaleString(), 26, 40);
+  ctx.fillStyle='#8a7fb0'; ctx.font='11px ui-monospace,monospace';
+  ctx.fillText('SCORE', 26, 54);
+
+  // takes remaining as pips (top-right) + echo count
+  ctx.textAlign='right';
+  const remaining = CFG.maxTakes - G.takesUsed;
+  ctx.fillStyle='#8a7fb0'; ctx.font='11px ui-monospace,monospace';
+  ctx.fillText('TAKES LEFT', W-26, 24);
+  for (let i=0;i<CFG.maxTakes;i++){
+    const used = i >= remaining;
+    ctx.fillStyle = used ? 'rgba(255,255,255,0.14)' : (i===remaining-1?'#ff6b6b':'#ffd9b0');
+    const px = W-26 - i*16;
+    ctx.beginPath(); ctx.arc(px-5, 38, 5, 0, TAU); ctx.fill();
+  }
+  ctx.fillStyle='#7ad0ff'; ctx.font='bold 12px ui-monospace,monospace';
+  ctx.fillText(`${G.takesUsed} ECHO${G.takesUsed===1?'':'ES'} LIVE`, W-26, 60);
+  ctx.textAlign='left';
+}
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+
+// ===== UI / MENUS =====
+const overlays = { menu:el('menu'), pause:el('pause'), over:el('over'), win:el('win') };
+function el(id){ return document.getElementById(id); }
+function show(which){
+  for (const k in overlays) overlays[k].classList.toggle('hidden', k!==which);
+}
+function showNone(){ for (const k in overlays) overlays[k].classList.add('hidden'); }
+
+function startGame(){
+  Sound.unlock();
+  newGame();
+  startTake();
+  state = GameState.PLAYING;
+  last = performance.now();
+  showNone();
+  setHint('');
+}
+function togglePause(){
+  if (state === GameState.PLAYING){
+    state = GameState.PAUSED;
+    el('pauseInfo').innerHTML =
+      `take <b>${G.round}/${CFG.maxTakes}</b> · <b>${G.takesUsed}</b> echo${G.takesUsed===1?'':'es'} firing · core <b>${Math.ceil(G.core.hp/G.core.max*100)}%</b>`;
+    show('pause'); Sound.click();
+  } else if (state === GameState.PAUSED){
+    resumeGame();
+  }
+}
+function resumeGame(){
+  if (state!==GameState.PAUSED) return;
+  state = GameState.PLAYING; last = performance.now(); showNone(); Sound.click();
+}
+function returnToMenu(){ state = GameState.MENU; show('menu'); Sound.click(); }
+
+function toggleMute(){
+  Sound.toggleMute();
+  el('mute').textContent = Sound.muted ? '🔇 MUTED' : '♪ SOUND';
+}
+function setHint(t){ el('hint').textContent = t; }
+
+// button wiring
+el('play').onclick   = () => { Sound.click(); startGame(); };
+el('resume').onclick = resumeGame;
+el('restart').onclick= () => { Sound.click(); startGame(); };
+el('quit').onclick   = returnToMenu;
+el('again').onclick  = () => { Sound.click(); startGame(); };
+el('overMenu').onclick = returnToMenu;
+el('winAgain').onclick = () => { Sound.click(); startGame(); };
+el('winMenu').onclick  = returnToMenu;
+el('mute').onclick   = () => { Sound.unlock(); toggleMute(); };
+
+// ===== LOOP =====
+let last = performance.now();
+function frame(now){
+  const dt = Math.min((now - last)/1000, 0.05);   // clamp big gaps after tab-out
+  last = now;
+  if (state === GameState.PLAYING) update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+
+// ===== BOOT =====
+function resize(){
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  W = innerWidth; H = innerHeight;
+  canvas.width = W*dpr; canvas.height = H*dpr;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+addEventListener('resize', resize);
+resize();
+show('menu');
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

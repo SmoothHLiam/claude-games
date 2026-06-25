@@ -19,6 +19,7 @@ or jump straight into any game's folder.
 | [**GEMINI**](gemini/index.html) | Mirror snake | **Mirror control** — steer two snakes with one set of controls; Left/Right are flipped, so the amber twin reflects the cyan one across the seam. Feed both, crash neither. |
 | [**AEGIS**](aegis/index.html) | Bullet-parry arena | **No gun** — your rotating shield is your only weapon. Parry incoming bullets to fire them back into the turrets that shot them; chain parries to charge an AEGIS Burst that reflects every bullet at once. |
 | [**TEMPO**](tempo/index.html) | Time-bending arena shooter | **Time moves only when you do** — enemies, their bullets, and spawns all run at the speed *you* move. Stand still and the world nearly freezes; your own shots always fly at full speed. Freeze time, aim, fire, then dance through the gaps. Clear 12 waves to win. |
+| [**ENCORE**](encore/index.html) | Echo / replay arena shooter | **Every life replays beside you** — the instant you die, your whole run is recorded and returns from the next take on as an intangible *echo* that moves and fires exactly as you did. Enemies only chase the live you, so your echoes pour uninterrupted fire into the CORE. Stack enough past selves to burst it in one take before your 7 takes run out. |
 
 Each game is a single self-contained `index.html` — **open it directly in any
 modern browser** (double-click, or drag it into a tab). No server needed.
@@ -34,6 +35,7 @@ gravlasso/        # GRAVLASSO  — gravity-lasso asteroid arena
 gemini/           # GEMINI     — mirror twin-snake
 aegis/            # AEGIS      — bullet-parry / shield-reflect arena
 tempo/            # TEMPO      — time-moves-when-you-move arena shooter
+encore/           # ENCORE     — echo / replay "fight beside your past lives" arena
 ```
 
 ## Notes
